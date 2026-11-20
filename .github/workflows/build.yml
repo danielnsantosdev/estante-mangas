@@ -21,16 +21,37 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - run: npm install --no-audit --no-fund
       - run: npm run build:web
+      - name: Número da versão
+        shell: bash
+        run: echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
       - run: npx cap add android
-      - name: Ícone do app
-        run: npx @capacitor/assets generate --android --iconBackgroundColor "#e0312b" --iconBackgroundColorDark "#e0312b" --splashBackgroundColor "#f4efe5" --splashBackgroundColorDark "#141318" || echo "Ícone padrão mantido"
+      - name: Ícone do app e número da versão
+        run: |
+          cp -r android-res/* android/app/src/main/res/
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
       - run: npx cap sync android
-      - name: Compilar APK
+      - name: Compilar APK (tenta até 3 vezes se o servidor de peças estiver ocupado)
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-      - run: cp android/app/build/outputs/apk/debug/app-debug.apk EstanteMangas.apk
+          for i in 1 2 3; do ./gradlew assembleRelease --no-daemon && break; echo "Tentativa $i falhou, esperando 60s..."; sleep 60; [ $i = 3 ] && exit 1; done
+      - name: Assinar APK
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KS_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          $BT/zipalign -p -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > ks.p12
+            $BT/apksigner sign --ks ks.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --out EstanteMangas.apk aligned.apk
+            rm -f ks.p12
+          else
+            echo "::warning::Segredos ANDROID_KEYSTORE/ANDROID_KEY_PASSWORD não configurados: usando assinatura temporária."
+            keytool -genkeypair -storetype PKCS12 -keystore tmp.p12 -alias tmp -keyalg RSA -keysize 2048 -validity 10000 -storepass tmppass -keypass tmppass -dname "CN=tmp"
+            $BT/apksigner sign --ks tmp.p12 --ks-pass pass:tmppass --out EstanteMangas.apk aligned.apk
+          fi
       - uses: actions/upload-artifact@v4
         with: { name: android, path: EstanteMangas.apk }
 
@@ -41,6 +62,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install --no-audit --no-fund
+      - name: Número da versão
+        shell: bash
+        run: echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/EstanteMangas-Setup.exe }
