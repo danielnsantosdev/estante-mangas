@@ -43,8 +43,14 @@ jobs:
         run: |
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           $BT/zipalign -p -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          # Limpa espaços, quebras de linha ou caracteres invisíveis que vêm junto ao copiar e colar
+          KS_PASS=$(printf '%s' "$KS_PASS" | tr -cd 'A-Za-z0-9')
+          KS_B64=$(printf '%s' "$KS_B64" | tr -cd 'A-Za-z0-9+/=')
+          export KS_PASS
+          echo "Senha: ${#KS_PASS} caracteres (esperado 24) | Chave: ${#KS_B64} caracteres (esperado 3556)"
           if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > ks.p12
+            printf '%s' "$KS_B64" | base64 -d > ks.p12
+            keytool -list -storetype PKCS12 -keystore ks.p12 -storepass "$KS_PASS" >/dev/null || { echo "::error::A senha ou a chave dos segredos não confere. Confira os segredos ANDROID_KEY_PASSWORD e ANDROID_KEYSTORE."; exit 1; }
             $BT/apksigner sign --ks ks.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --out EstanteMangas.apk aligned.apk
             rm -f ks.p12
           else
