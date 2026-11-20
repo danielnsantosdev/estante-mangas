@@ -1,0 +1,51 @@
+{
+  "name": "estante-mangas",
+  "version": "1.0.0",
+  "description": "Estante de Mangás - controle dos capítulos lidos",
+  "author": "Estante de Mangas",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "build:web": "esbuild src/app.js --bundle --minify --format=iife --target=es2019,chrome90 --outfile=www/app.js && esbuild src/fonts.css --bundle --minify --loader:.woff2=file --loader:.woff=file --outdir=www/fonts",
+    "start": "npm run build:web && electron .",
+    "dist:win": "npm run build:web && electron-builder --win nsis --publish never"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@fontsource/bangers": "^5.0.20",
+    "@fontsource/inter": "^5.0.20",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.21.5",
+    "firebase": "^10.12.2"
+  },
+  "build": {
+    "appId": "com.estante.mangas",
+    "productName": "Estante de Mangas",
+    "files": [
+      "electron/**",
+      "www/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "artifactName": "EstanteMangas-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Estante de Mangas"
+    }
+  }
+}

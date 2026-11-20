@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estante de Mangás</title>
+<meta name="theme-color" content="#e0312b">
+<link rel="icon" href="icons/favicon-64.png" type="image/png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Configuração pendente -->
+<div id="setupScreen" class="hidden">
+  <div class="setup">
+    <h2 style="margin-top:0">Quase lá! ⚙️</h2>
+    <p>O app ainda não foi ligado ao servidor. Preencha o arquivo <code>src/firebase-config.js</code> e gere o app de novo.</p>
+  </div>
+</div>
+
+<!-- Login -->
+<div id="loginScreen" class="login hidden">
+  <form class="login-box" id="loginForm" autocomplete="on">
+    <img src="icons/icon-192.png" alt="">
+    <h1 class="logo"><span class="mark">ESTANTE</span> de mangás</h1>
+    <div class="tabs" id="authTabs">
+      <button type="button" class="chip on" data-mode="login">Entrar</button>
+      <button type="button" class="chip" data-mode="signup">Primeiro acesso</button>
+    </div>
+    <p id="authHint">Entre com seu e-mail e senha.</p>
+    <label class="f" style="width:100%;text-align:left">E-mail<input name="email" type="email" autocomplete="email" required></label>
+    <label class="f" style="width:100%;text-align:left">Senha<input name="pass" type="password" autocomplete="current-password" minlength="6" required></label>
+    <label class="f hidden" id="pass2Wrap" style="width:100%;text-align:left">Repita a senha<input name="pass2" type="password" autocomplete="new-password" minlength="6"></label>
+    <button class="gbtn" type="submit" id="authBtn">Entrar</button>
+    <button class="btn ghost" type="button" id="forgotBtn">Esqueci a senha</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</div>
+
+<!-- Confirmar e-mail -->
+<div id="verifyScreen" class="login hidden">
+  <div class="login-box">
+    <img src="icons/icon-192.png" alt="">
+    <h1 class="logo"><span class="mark">CONFIRME</span> o e-mail</h1>
+    <p>Enviamos um link para <b id="verifyEmail"></b>. Abra seu e-mail (veja também o spam), clique no link e depois toque abaixo.</p>
+    <button class="gbtn" id="verifiedBtn">Já confirmei</button>
+    <button class="btn ghost" id="resendBtn">Reenviar e-mail</button>
+    <button class="btn ghost" id="verifyOut">Usar outra conta</button>
+    <div class="err" id="verifyErr"></div>
+  </div>
+</div>
+
+<!-- Não convidado -->
+<div id="deniedScreen" class="login hidden">
+  <div class="login-box">
+    <img src="icons/icon-192.png" alt="">
+    <h1 class="logo"><span class="mark">ACESSO</span> restrito</h1>
+    <p>A conta <b id="deniedEmail"></b> ainda não foi liberada. Peça para quem te passou o app adicionar seu e-mail e tente de novo.</p>
+    <button class="gbtn" id="retryBtn">Tentar de novo</button>
+    <button class="btn ghost" id="deniedOut">Usar outra conta</button>
+  </div>
+</div>
+
+<!-- App -->
+<div id="appScreen" class="hidden">
+  <header>
+    <div class="bar">
+      <h1 class="logo"><span class="mark">ESTANTE</span> de mangás</h1>
+      <div class="spacer"></div>
+      <div class="sync" id="sync"><span class="dot"></span><span class="txt">Conectando…</span></div>
+      <button class="icon-btn" id="menuBtn" title="Menu">☰</button>
+    </div>
+    <div class="tools">
+      <div class="row">
+        <div class="search">🔍<input id="q" type="search" placeholder="Buscar mangá…" autocomplete="off"></div>
+        <select class="sort" id="sort" title="Ordenar">
+          <option value="recent">Mais recentes</option>
+          <option value="name">Nome A–Z</option>
+          <option value="stale">Parados há mais tempo</option>
+        </select>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </header>
+  <div class="banner" id="banner"></div>
+  <main>
+    <div id="grid" class="grid"></div>
+    <div id="empty"></div>
+  </main>
+  <button class="fab" id="addBtn"><span>+</span> Adicionar</button>
+</div>
+
+<div class="backdrop" id="bd"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+<input type="file" id="file" accept="image/*" hidden>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
