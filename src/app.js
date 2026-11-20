@@ -282,7 +282,12 @@ try { chk = JSON.parse(localStorage.getItem(CHK_KEY) || "{}") || {}; } catch (e)
 const saveChk = () => { try { localStorage.setItem(CHK_KEY, JSON.stringify(chk)); } catch (e) {} };
 const canFetchSites = () => !!(window.estanteNative || isNativeApp);
 async function fetchPage(url) {
+  // PC: pede ao app (Electron). Celular: usa o acesso nativo do Android só para esta consulta,
+  // sem mexer na conexão do banco de dados.
+  const nativeHttp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
   const job = window.estanteNative ? window.estanteNative.fetchText(url)
+    : nativeHttp ? nativeHttp.request({ url, method: "GET", headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Mobile Safari/537.36" }, responseType: "text" })
+        .then(r => { if (r.status >= 400) throw new Error("http"); return typeof r.data === "string" ? r.data : JSON.stringify(r.data || ""); })
     : fetch(url, { headers: { Accept: "text/html" } }).then(r => { if (!r.ok) throw new Error("http"); return r.text(); });
   return Promise.race([job, new Promise((_, rej) => setTimeout(() => rej(new Error("tempo")), 15000))]);
 }
