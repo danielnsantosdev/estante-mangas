@@ -160,3 +160,41 @@
 .login-box .logo{flex-wrap:wrap;white-space:normal;font-size:30px;row-gap:6px}
 .login-box{min-width:0}
 .login-box .tabs{width:100%}
+
+/* ---------- Celular: cards compactos, 3 por linha ---------- */
+@media (max-width:520px){
+  main{padding:12px 10px 100px}
+  .grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .card{box-shadow:3px 3px 0 var(--ink);border-radius:5px}
+  .badge{top:5px;left:5px;font-size:8px;padding:2px 5px;gap:3px;border-width:1.5px;letter-spacing:0}
+  .badge i{width:6px;height:6px}
+  .ph span{font-size:32px;-webkit-text-stroke:1.5px var(--ink);text-shadow:2px 2px 0 var(--ink)}
+  .body{padding:6px;gap:6px}
+  .title{font-size:12px;min-height:29px;line-height:1.2}
+  .chap{border-width:1.5px;border-radius:5px}
+  .chap button{width:24px;font-size:16px}
+  .chap .num{border-left-width:1.5px;border-right-width:1.5px;padding:3px 1px}
+  .chap .num small{font-size:6.5px;letter-spacing:.4px}
+  .chap .num b{font-size:18px}
+  .foot{font-size:10px;gap:4px}
+  .mini{height:24px;min-width:24px;padding:0 6px;font-size:10.5px;border-width:1.5px}
+  .lw,.arr{display:none}
+  .fab{height:52px;font-size:15px;right:14px;bottom:16px}
+}
+@media (max-width:520px){
+  .fab{width:58px;height:58px;padding:0;justify-content:center;border-radius:50%}
+  .fab span{font-size:32px}
+  .fabtxt{display:none}
+  .bar{padding:10px 12px}
+  .tools{padding:0 12px 10px;gap:8px}
+  .search,select.sort{height:38px}
+  .chip{padding:5px 10px;font-size:12px}
+}
+
+/* ---------- Nitidez ---------- */
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+.cover img,.cprev img{image-rendering:auto;backface-visibility:hidden;transform:translateZ(0)}
+
+/* ---------- Etiqueta de capítulos novos ---------- */
+.newb{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border:2px solid var(--ink);border-radius:999px;font-size:12px;font-weight:800;padding:2px 8px;box-shadow:2px 2px 0 var(--ink);animation:pop .3s ease both;white-space:nowrap}
+@media (max-width:520px){ .newb{top:5px;right:5px;font-size:9.5px;padding:1px 5px;border-width:1.5px;box-shadow:1.5px 1.5px 0 var(--ink)} }

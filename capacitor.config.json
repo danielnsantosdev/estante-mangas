@@ -2,5 +2,12 @@
   "appId": "com.estante.mangas",
   "appName": "Estante de Mangás",
   "webDir": "www",
-  "android": { "backgroundColor": "#f4efe5" }
+  "android": {
+    "backgroundColor": "#f4efe5"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
 }

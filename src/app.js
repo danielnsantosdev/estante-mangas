@@ -14,11 +14,12 @@ import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
 
 const STATUS = {
   lendo:      { label: "Lendo" },
-  acumulando: { label: "Acumulando caps" },
   pausado:    { label: "Pausado" },
   concluido:  { label: "Concluído" },
 };
 const $ = (s) => document.querySelector(s);
+// Status antigo "acumulando" agora conta como "pausado".
+const stOf = (it) => it && it.status === "acumulando" ? "pausado" : (it && STATUS[it.status] ? it.status : "lendo");
 const show = (id) => ["setupScreen", "loginScreen", "verifyScreen", "deniedScreen", "appScreen"].forEach(x => $("#" + x).classList.toggle("hidden", x !== id));
 
 let items = new Map();          // id -> mangá
@@ -35,15 +36,17 @@ const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toL
 const fmtCap = (n) => { n = Number(n) || 0; return Number.isInteger(n) ? String(n) : String(n).replace(".", ","); };
 const parseCap = (v) => { const n = parseFloat(String(v).replace(",", ".")); return isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : 0; };
 function relTime(ms) {
+  // "lido" some no celular (classe .lw) para caber no card compacto
   if (!ms) return "";
+  const L = '<span class="lw">lido </span>';
   const d = (Date.now() - ms) / 86400000;
-  if (d < 1) return "lido hoje";
-  if (d < 2) return "lido ontem";
-  if (d < 30) return `lido há ${Math.floor(d)} dias`;
+  if (d < 1) return L + "hoje";
+  if (d < 2) return L + "ontem";
+  if (d < 30) return `${L}há ${Math.floor(d)} dias`;
   const m = Math.floor(d / 30.4);
-  if (m < 12) return m === 1 ? "lido há 1 mês" : `lido há ${m} meses`;
+  if (m < 12) return m === 1 ? L + "há 1 mês" : `${L}há ${m} meses`;
   const y = Math.floor(d / 365);
-  return y === 1 ? "lido há 1 ano" : `lido há ${y} anos`;
+  return y === 1 ? L + "há 1 ano" : `${L}há ${y} anos`;
 }
 function fixLink(u) {
   u = String(u || "").trim();
@@ -164,6 +167,27 @@ async function checkInvite(user) {
   if (invited === false) { $("#deniedEmail").textContent = email || "(sem e-mail)"; show("deniedScreen"); return; }
   show("appScreen");
   startSync(user.uid);
+  checkUpdate();
+}
+
+// ---------- aviso de versão nova ----------
+let updateChecked = false;
+async function checkUpdate() {
+  if (updateChecked) return; updateChecked = true;
+  const mine = Number(window.APP_VERSION || 0);
+  const m = String(downloadUrl || "").match(/github\.com\/([^/]+)\/([^/]+)/);
+  if (!mine || !m) return;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${m[1]}/${m[2]}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
+    if (!r.ok) return;
+    const j = await r.json();
+    const latest = parseInt(String(j.tag_name || "").split(".").pop(), 10);
+    if (latest > mine) {
+      const b = $("#banner");
+      b.innerHTML = `📦 Tem versão nova do app (v1.${latest}). <a href="${esc(downloadUrl)}" target="_blank" rel="noopener noreferrer" style="color:inherit;font-weight:800">Baixar agora ↗</a>`;
+      b.classList.add("show");
+    }
+  } catch (e) {}
 }
 async function fullSignOut() {
   // Sai da conta e apaga a cópia local dos dados neste aparelho.
@@ -188,6 +212,7 @@ function startSync(uid) {
     items = next;
     netState = { pendingWrites: snap.metadata.hasPendingWrites, fromCache: snap.metadata.fromCache };
     if (!snap.metadata.fromCache || snap.size) { loaded = true; clearTimeout(slowT); }
+    if (!snap.metadata.fromCache) setTimeout(checkNewChapters, 1500);
     render(); updateSync();
   }, (err) => {
     clearTimeout(slowT); loaded = true;
@@ -212,7 +237,7 @@ function clean(it) {
   const o = {
     title: String(it.title || "").trim().slice(0, 120) || "Sem nome",
     chapter: Math.min(99999, parseCap(it.chapter)),
-    status: STATUS[it.status] ? it.status : "lendo",
+    status: stOf(it),
     link: fixLink(it.link).slice(0, 2000),
     cover: safeCover(it.cover),
   };
@@ -249,10 +274,57 @@ function create(data) {
 }
 function remove(id) { items.delete(id); render(); scheduleWrite(id, 0); }
 
+// ---------- capítulos novos (confere ao abrir o app) ----------
+// Guarda, por aparelho, o último capítulo encontrado no site e o que já foi "visto" (ao tocar em Ler).
+const CHK_KEY = "estante-chk-v1";
+let chk = {};
+try { chk = JSON.parse(localStorage.getItem(CHK_KEY) || "{}") || {}; } catch (e) { chk = {}; }
+const saveChk = () => { try { localStorage.setItem(CHK_KEY, JSON.stringify(chk)); } catch (e) {} };
+const canFetchSites = () => !!(window.estanteNative || isNativeApp);
+async function fetchPage(url) {
+  const job = window.estanteNative ? window.estanteNative.fetchText(url)
+    : fetch(url, { headers: { Accept: "text/html" } }).then(r => { if (!r.ok) throw new Error("http"); return r.text(); });
+  return Promise.race([job, new Promise((_, rej) => setTimeout(() => rej(new Error("tempo")), 15000))]);
+}
+// Procura o maior número de capítulo na página (links "capitulo-427" e textos "Capítulo 427").
+function latestFromHtml(html) {
+  let max = null;
+  const add = (n) => { n = parseFloat(String(n).replace(",", ".")); if (isFinite(n) && n > 0 && n < 100000 && (max === null || n > max)) max = n; };
+  for (const m of html.matchAll(/href\s*=\s*["'][^"']*?(?:cap(?:itulo)?|chapter|chap)[-_/.]?(\d{1,5})(?:[-.](\d{1,2}))?(?=[/"'?#]|$)/gi)) add(m[2] ? m[1] + "." + m[2] : m[1]);
+  for (const m of html.matchAll(/(?:cap[íi]tulo|cap\.|chapter|ch\.)\s*(\d{1,5}(?:[.,]\d{1,2})?)/gi)) add(m[1]);
+  return max;
+}
+let checkStarted = false;
+async function checkNewChapters() {
+  if (checkStarted || !canFetchSites()) return; checkStarted = true;
+  const now = Date.now();
+  const list = [...items.values()].filter(it => fixLink(it.link) && stOf(it) !== "concluido" && !(chk[it.id] && now - (chk[it.id].t || 0) < 3 * 3600e3));
+  let i = 0;
+  const worker = async () => {
+    while (i < list.length) {
+      const it = list[i++];
+      try {
+        const n = latestFromHtml(await fetchPage(fixLink(it.link)));
+        if (n == null) continue;
+        const c = chk[it.id] || {};
+        if (c.seen == null) c.seen = n;      // primeira vez: só marca a referência
+        c.latest = n; c.t = Date.now(); chk[it.id] = c;
+        saveChk(); render();
+      } catch (e) { /* site não deixou ler: ignora em silêncio */ }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
+function unreadBadge(it) {
+  const c = chk[it.id]; const cur = Number(it.chapter) || 0;
+  if (!c || c.latest == null || c.seen == null) return 0;
+  return (c.latest > c.seen && c.latest > cur) ? Math.ceil(c.latest - cur) : 0;
+}
+
 // ---------- renderização ----------
 function filtered() {
   const q = norm(ui.q);
-  const arr = [...items.values()].filter(it => (ui.filter === "todos" || it.status === ui.filter) && (!q || norm(it.title).includes(q)));
+  const arr = [...items.values()].filter(it => (ui.filter === "todos" || stOf(it) === ui.filter) && (!q || norm(it.title).includes(q)));
   if (ui.sort === "name") arr.sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   else if (ui.sort === "stale") arr.sort((a, b) => (a.lastReadAt || 0) - (b.lastReadAt || 0));
   else arr.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -261,7 +333,7 @@ function filtered() {
 function renderChips() {
   const counts = { todos: items.size };
   for (const k in STATUS) counts[k] = 0;
-  for (const it of items.values()) if (counts[it.status] != null) counts[it.status]++;
+  for (const it of items.values()) counts[stOf(it)]++;
   $("#chips").innerHTML = ["todos", ...Object.keys(STATUS)].map(k =>
     `<button class="chip ${ui.filter === k ? "on" : ""}" data-f="${k}">${k === "todos" ? "Todos" : STATUS[k].label}<span class="n">${counts[k]}</span></button>`).join("");
 }
@@ -270,14 +342,14 @@ function phHTML(title, size) {
   return `<div class="ph"><span${size ? ` style="font-size:${size}px"` : ""}>${initials || "?"}</span></div>`;
 }
 function cardHTML(it) {
-  const st = STATUS[it.status] ? it.status : "lendo";
+  const st = stOf(it);
   const cv = safeCover(it.cover), lk = fixLink(it.link);
   const cover = cv ? `<img src="${esc(cv)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>` : phHTML(it.title);
   const days = it.lastReadAt ? (Date.now() - it.lastReadAt) / 86400000 : 0;
   const old = days > 60 && st !== "concluido";
-  const link = lk ? `<a class="mini read" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" title="Abrir site">Ler ↗</a>` : "";
+  const link = lk ? `<a class="mini read" data-act="read" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" title="Abrir site">Ler<span class="arr"> ↗</span></a>` : "";
   return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="edit">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span></div>
+    <div class="cover" data-act="edit">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span>${unreadBadge(it) ? `<span class="newb" title="Capítulos novos">🔔 +${unreadBadge(it)}</span>` : ""}</div>
     <div class="body">
       <div class="title" title="${esc(it.title)}">${esc(it.title)}</div>
       <div class="chap">
@@ -319,17 +391,30 @@ $("#bd").addEventListener("click", (e) => { if (e.target.id === "bd") closeModal
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#bd").classList.contains("open")) closeModal(); });
 
 async function imageToCover(blob) {
+  // Capa em alta qualidade: 600×800, redução em etapas (mais nítida), WebP ou JPEG.
   const url = URL.createObjectURL(blob);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const W = 360, H = 480;
-    const c = document.createElement("canvas"); c.width = W; c.height = H;
-    const ctx = c.getContext("2d");
+    const W = 600, H = 800;
     const r = Math.max(W / img.naturalWidth, H / img.naturalHeight);
-    const w = img.naturalWidth * r, h = img.naturalHeight * r;
+    let src = img, sw = img.naturalWidth, sh = img.naturalHeight;
+    // reduz pela metade até chegar perto do tamanho final (evita serrilhado)
+    while (sw * r < sw / 2) {
+      const c2 = document.createElement("canvas"); c2.width = Math.round(sw / 2); c2.height = Math.round(sh / 2);
+      const x2 = c2.getContext("2d"); x2.imageSmoothingEnabled = true; x2.imageSmoothingQuality = "high";
+      x2.drawImage(src, 0, 0, c2.width, c2.height); src = c2; sw = c2.width; sh = c2.height;
+    }
+    const k = Math.max(W / sw, H / sh);
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
-    return c.toDataURL("image/jpeg", 0.82);
+    ctx.drawImage(src, (W - sw * k) / 2, (H - sh * k) / 2, sw * k, sh * k);
+    for (const q of [0.9, 0.82, 0.72, 0.6]) {
+      let out = c.toDataURL("image/webp", q);
+      if (!out.startsWith("data:image/webp")) out = c.toDataURL("image/jpeg", q);
+      if (out.length <= 380000) return out;
+    }
+    return c.toDataURL("image/jpeg", 0.5);
   } finally { URL.revokeObjectURL(url); }
 }
 
@@ -337,7 +422,7 @@ function openEditor(id) {
   const it = id ? items.get(id) : null;
   let cover = it ? it.cover || "" : "";
   let confirmDel = false;
-  const opts = Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(it ? it.status : "lendo") === k ? "selected" : ""}>${v.label}</option>`).join("");
+  const opts = Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(it ? stOf(it) : "lendo") === k ? "selected" : ""}>${v.label}</option>`).join("");
   openModal(`
     <form id="ed" autocomplete="off">
       <div class="mhead"><h2>${it ? "Editar mangá" : "Novo mangá"}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
@@ -587,6 +672,7 @@ $("#grid").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]"); if (!btn) return;
   const id = btn.closest(".card").dataset.id; const it = items.get(id); if (!it) return;
   const act = btn.dataset.act; const c = Number(it.chapter) || 0;
+  if (act === "read") { const c = chk[id]; if (c && c.latest != null) { c.seen = c.latest; saveChk(); setTimeout(render, 300); } return; }
   if (act === "plus") commit(id, { chapter: Math.floor(c) + 1, lastReadAt: Date.now() });
   else if (act === "minus") { if (c > 0) commit(id, { chapter: Math.max(0, Math.ceil(c) - 1), lastReadAt: Date.now() }); }
   else if (act === "goto") openGoto(id);
