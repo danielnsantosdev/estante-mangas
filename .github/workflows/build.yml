@@ -1,15 +1,15 @@
 # Compila o app automaticamente sempre que algo é enviado ao GitHub.
 # Resultado: uma página "Releases" com EstanteMangas.apk (Android) e EstanteMangas-Setup.exe (Windows).
 name: Gerar app
-
+ 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
+ 
 permissions:
   contents: write
-
+ 
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -47,12 +47,15 @@ jobs:
           KS_PASS=$(printf '%s' "$KS_PASS" | tr -cd 'A-Za-z0-9')
           KS_B64=$(printf '%s' "$KS_B64" | tr -cd 'A-Za-z0-9+/=')
           export KS_PASS
-          echo "Senha: ${#KS_PASS} caracteres (esperado 24) | Chave: ${#KS_B64} caracteres (esperado 3556)"
           if [ -n "$KS_B64" ]; then
-            printf '%s' "$KS_B64" | base64 -d > ks.p12
-            keytool -list -storetype PKCS12 -keystore ks.p12 -storepass "$KS_PASS" >/dev/null || { echo "::error::A senha ou a chave dos segredos não confere. Confira os segredos ANDROID_KEY_PASSWORD e ANDROID_KEYSTORE."; exit 1; }
-            $BT/apksigner sign --ks ks.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --out EstanteMangas.apk aligned.apk
-            rm -f ks.p12
+            printf '%s' "$KS_B64" | base64 -d > ks.bin
+            echo "Senha: ${#KS_PASS} caracteres | Chave: ${#KS_B64} caracteres | conferência: senha=$(printf '%s' "$KS_PASS" | sha256sum | cut -c1-12) chave=$(sha256sum ks.bin | cut -c1-12)"
+            TYPE=""
+            for t in JKS PKCS12; do keytool -list -storetype $t -keystore ks.bin -storepass "$KS_PASS" >/dev/null 2>&1 && TYPE=$t && break; done
+            [ -n "$TYPE" ] || { echo "::error::A senha ou a chave dos segredos não confere. Confira os segredos ANDROID_KEY_PASSWORD e ANDROID_KEYSTORE."; exit 1; }
+            echo "Formato da chave: $TYPE"
+            $BT/apksigner sign --ks ks.bin --ks-type $TYPE --ks-pass env:KS_PASS --key-pass env:KS_PASS --out EstanteMangas.apk aligned.apk
+            rm -f ks.bin
           else
             echo "::warning::Segredos ANDROID_KEYSTORE/ANDROID_KEY_PASSWORD não configurados: usando assinatura temporária."
             keytool -genkeypair -storetype PKCS12 -keystore tmp.p12 -alias tmp -keyalg RSA -keysize 2048 -validity 10000 -storepass tmppass -keypass tmppass -dname "CN=tmp"
@@ -60,7 +63,7 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with: { name: android, path: EstanteMangas.apk }
-
+ 
   windows:
     runs-on: windows-latest
     steps:
@@ -74,7 +77,7 @@ jobs:
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/EstanteMangas-Setup.exe }
-
+ 
   publicar:
     needs: [android, windows]
     runs-on: ubuntu-latest
@@ -92,3 +95,4 @@ jobs:
           files: |
             arquivos/EstanteMangas.apk
             arquivos/EstanteMangas-Setup.exe
+ 
