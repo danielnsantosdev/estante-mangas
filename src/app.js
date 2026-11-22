@@ -14,6 +14,7 @@ import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
 
 const STATUS = {
   lendo:      { label: "Lendo" },
+  fila:       { label: "Na fila" },
   pausado:    { label: "Pausado" },
   concluido:  { label: "Concluído" },
 };
@@ -303,7 +304,7 @@ let checkStarted = false;
 async function checkNewChapters() {
   if (checkStarted || !canFetchSites()) return; checkStarted = true;
   const now = Date.now();
-  const list = [...items.values()].filter(it => fixLink(it.link) && stOf(it) !== "concluido" && !(chk[it.id] && now - (chk[it.id].t || 0) < 3 * 3600e3));
+  const list = [...items.values()].filter(it => fixLink(it.link) && stOf(it) !== "concluido" && stOf(it) !== "fila" && !(chk[it.id] && now - (chk[it.id].t || 0) < 3 * 3600e3));
   let i = 0;
   const worker = async () => {
     while (i < list.length) {
@@ -351,7 +352,7 @@ function cardHTML(it) {
   const cv = safeCover(it.cover), lk = fixLink(it.link);
   const cover = cv ? `<img src="${esc(cv)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>` : phHTML(it.title);
   const days = it.lastReadAt ? (Date.now() - it.lastReadAt) / 86400000 : 0;
-  const old = days > 60 && st !== "concluido";
+  const old = days > 60 && st !== "concluido" && st !== "fila";
   const link = lk ? `<a class="mini read" data-act="read" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" title="Abrir site">Ler<span class="arr"> ↗</span></a>` : "";
   return `<article class="card" data-id="${esc(it.id)}">
     <div class="cover" data-act="edit">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span>${unreadBadge(it) ? `<span class="newb" title="Capítulos novos">🔔 +${unreadBadge(it)}</span>` : ""}</div>

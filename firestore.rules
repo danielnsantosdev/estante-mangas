@@ -29,7 +29,7 @@ service cloud.firestore {
       return d.keys().hasOnly(['title', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt'])
         && d.title is string && d.title.size() > 0 && d.title.size() <= 120
         && d.chapter is number && d.chapter >= 0 && d.chapter < 100000
-        && d.status in ['lendo', 'acumulando', 'pausado', 'concluido']
+        && d.status in ['lendo', 'fila', 'acumulando', 'pausado', 'concluido']
         && (!('link' in d) || (d.link is string && d.link.size() <= 2000))
         && (!('cover' in d) || (d.cover is string && d.cover.size() <= 400000));
     }

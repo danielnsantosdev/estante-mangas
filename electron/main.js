@@ -1,6 +1,26 @@
 // Janela do app no Windows (Electron)
 const { app, BrowserWindow, shell, Menu, ipcMain, net } = require("electron");
 const path = require("path");
+const fs = require("fs");
+const { spawn } = require("child_process");
+
+// Abre links sempre no Google Chrome (se estiver instalado); senão, no navegador padrão.
+function chromePath() {
+  const bases = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env["PROGRAMFILES(X86)"]].filter(Boolean);
+  for (const b of bases) {
+    const p = path.join(b, "Google", "Chrome", "Application", "chrome.exe");
+    try { if (fs.existsSync(p)) return p; } catch (e) {}
+  }
+  return null;
+}
+function openLink(url) {
+  if (!/^https?:\/\//i.test(url)) return;
+  const chrome = chromePath();
+  if (chrome) {
+    try { spawn(chrome, [url], { detached: true, stdio: "ignore" }).unref(); return; } catch (e) {}
+  }
+  shell.openExternal(url);
+}
 
 if (!app.requestSingleInstanceLock()) app.quit();
 let win;
@@ -14,11 +34,11 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "..", "www", "index.html"));
   // Links externos (site do mangá) abrem no navegador normal.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    openLink(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e, url) => {
-    if (!url.startsWith("file://")) { e.preventDefault(); if (/^https?:\/\//i.test(url)) shell.openExternal(url); }
+    if (!url.startsWith("file://")) { e.preventDefault(); openLink(url); }
   });
 }
 // Busca o HTML de uma página (só http/https, até 3 MB, 15 s) para checar capítulos novos.
