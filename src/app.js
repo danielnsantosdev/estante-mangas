@@ -7,7 +7,8 @@ import {
 } from "firebase/auth";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, writeBatch,
+  collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch,
+  query, where, addDoc, updateDoc, deleteField,
   terminate, clearIndexedDbPersistence,
 } from "firebase/firestore";
 import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
@@ -28,7 +29,10 @@ const pending = new Map();      // id -> timer (alterações ainda não enviadas
 let col = null, unsub = null, loaded = false, currentUser = null;
 let netState = { pendingWrites: false, fromCache: true };
 let savedSort = "recent"; try { savedSort = localStorage.getItem("estante-sort") || "recent"; } catch (e) {}
-const ui = { filter: "todos", q: "", sort: savedSort };
+const ui = { filter: "todos", q: "", sort: savedSort, visit: null };   // visit = estante de outra pessoa aberta
+let myProfile = null;            // { apelido, publico }
+let myAvals = {};                // notas que visitantes deram nos MEUS mangás: { idMangá: { idVisitante: {nota, apelido, em} } }
+let extraUnsubs = [];
 $("#sort").value = ui.sort;
 
 // ---------- utilidades ----------
@@ -36,6 +40,10 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"
 const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const fmtCap = (n) => { n = Number(n) || 0; return Number.isInteger(n) ? String(n) : String(n).replace(".", ","); };
 const parseCap = (v) => { const n = parseFloat(String(v).replace(",", ".")); return isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : 0; };
+const NOTAS = Array.from({ length: 19 }, (_, i) => 1 + i * 0.5);           // 1; 1,5; … 10
+const fmtNota = (n) => Number.isInteger(n) ? String(n) : String(n).replace(".", ",");
+const parseNota = (v) => { const n = parseFloat(String(v ?? "").replace(",", ".")); return isFinite(n) && n >= 1 && n <= 10 ? Math.round(n * 2) / 2 : null; };
+const media = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : null;
 function relTime(ms) {
   // "lido" some no celular (classe .lw) para caber no card compacto
   if (!ms) return "";
@@ -202,6 +210,11 @@ $("#verifyOut").addEventListener("click", fullSignOut);
 
 function startSync(uid) {
   col = collection(db, "users", uid, "mangas");
+  extraUnsubs.forEach(f => { try { f(); } catch (e) {} }); extraUnsubs = [];
+  extraUnsubs.push(onSnapshot(doc(db, "perfis", uid), (d) => { myProfile = d.exists() ? d.data() : null; updateMeBtn(); }, () => {}));
+  extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avaliacoes"), (snap) => {
+    const m = {}; snap.forEach(d => { m[d.id] = (d.data() || {}).notas || {}; }); myAvals = m;
+  }, () => {}));
   render();
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
@@ -241,6 +254,8 @@ function clean(it) {
     status: stOf(it),
     link: fixLink(it.link).slice(0, 2000),
     cover: safeCover(it.cover),
+    nota: parseNota(it.nota),
+    comentario: String(it.comentario || "").trim().slice(0, 300),
   };
   for (const k of ["createdAt", "updatedAt", "lastReadAt"]) { const n = Number(it[k]); o[k] = isFinite(n) && n > 0 ? n : now; }
   return o;
@@ -328,18 +343,21 @@ function unreadBadge(it) {
 }
 
 // ---------- renderização ----------
+const source = () => ui.visit ? ui.visit.items : items;
 function filtered() {
   const q = norm(ui.q);
-  const arr = [...items.values()].filter(it => (ui.filter === "todos" || stOf(it) === ui.filter) && (!q || norm(it.title).includes(q)));
+  const arr = [...source().values()].filter(it => (ui.filter === "todos" || stOf(it) === ui.filter) && (!q || norm(it.title).includes(q)));
   if (ui.sort === "name") arr.sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   else if (ui.sort === "stale") arr.sort((a, b) => (a.lastReadAt || 0) - (b.lastReadAt || 0));
+  else if (ui.sort === "nota") arr.sort((a, b) => (parseNota(b.nota) || 0) - (parseNota(a.nota) || 0) || norm(a.title).localeCompare(norm(b.title)));
   else arr.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   return arr;
 }
 function renderChips() {
-  const counts = { todos: items.size };
+  const src = source();
+  const counts = { todos: src.size };
   for (const k in STATUS) counts[k] = 0;
-  for (const it of items.values()) counts[stOf(it)]++;
+  for (const it of src.values()) counts[stOf(it)]++;
   $("#chips").innerHTML = ["todos", ...Object.keys(STATUS)].map(k =>
     `<button class="chip ${ui.filter === k ? "on" : ""}" data-f="${k}">${k === "todos" ? "Todos" : STATUS[k].label}<span class="n">${counts[k]}</span></button>`).join("");
 }
@@ -348,37 +366,48 @@ function phHTML(title, size) {
   return `<div class="ph"><span${size ? ` style="font-size:${size}px"` : ""}>${initials || "?"}</span></div>`;
 }
 function cardHTML(it) {
-  const st = stOf(it);
+  const st = stOf(it), visit = !!ui.visit;
   const cv = safeCover(it.cover), lk = fixLink(it.link);
   const cover = cv ? `<img src="${esc(cv)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>` : phHTML(it.title);
   const days = it.lastReadAt ? (Date.now() - it.lastReadAt) / 86400000 : 0;
-  const old = days > 60 && st !== "concluido" && st !== "fila";
+  const old = !visit && days > 60 && st !== "concluido" && st !== "fila";
   const link = lk ? `<a class="mini read" data-act="read" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" title="Abrir site">Ler<span class="arr"> ↗</span></a>` : "";
-  return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="edit">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span>${unreadBadge(it) ? `<span class="newb" title="Capítulos novos">🔔 +${unreadBadge(it)}</span>` : ""}</div>
-    <div class="body">
-      <div class="title" title="${esc(it.title)}">${esc(it.title)}</div>
-      <div class="chap">
+  const chap = visit
+    ? `<div class="chap ro"><span class="num"><small>LEU ATÉ O CAP.</small><b>${fmtCap(it.chapter)}</b></span></div>`
+    : `<div class="chap">
         <button data-act="minus" aria-label="Capítulo anterior">−</button>
         <button class="num" data-act="goto" aria-label="Definir capítulo"><small>CAPÍTULO</small><b>${fmtCap(it.chapter)}</b></button>
         <button class="plus" data-act="plus" aria-label="Próximo capítulo">+</button>
-      </div>
-      <div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span>${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>
+      </div>`;
+  const foot = visit
+    ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
+    : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span>${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
+  return `<article class="card" data-id="${esc(it.id)}">
+    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
+    <div class="body">
+      <div class="title" title="${esc(it.title)}">${esc(it.title)}</div>
+      ${chap}
+      ${foot}
     </div>
   </article>`;
 }
 function render() {
   if (!currentUser) return;
   renderChips();
+  $("#visitBar").classList.toggle("hidden", !ui.visit);
+  if (ui.visit) { $("#visitName").textContent = "@" + ui.visit.apelido; $("#visitAv").innerHTML = avatarHTML(ui.visit.foto, ui.visit.apelido); }
+  $("#addBtn").classList.toggle("hidden", !!ui.visit);
+  updateBell();
   const grid = $("#grid"), empty = $("#empty");
-  if (!loaded) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando sua estante…</div>`; return; }
+  if (!loaded || (ui.visit && ui.visit.loading)) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando estante…</div>`; return; }
   const arr = filtered();
   grid.innerHTML = arr.map(cardHTML).join("");
   grid.querySelectorAll("img[data-fallback]").forEach(img => img.addEventListener("error", () => {
-    const card = img.closest(".card"); const it = card && items.get(card.dataset.id);
+    const card = img.closest(".card"); const it = card && source().get(card.dataset.id);
     img.outerHTML = phHTML(it ? it.title : "?");
   }, { once: true }));
-  if (!items.size) empty.innerHTML = `<div class="empty"><div class="big">Estante vazia!</div><p>Adicione o primeiro mangá que você está lendo — nome, capítulo e, se quiser, uma capa.</p><button class="btn primary" id="emptyAdd">+ Adicionar mangá</button></div>`;
+  if (ui.visit && !source().size) empty.innerHTML = `<div class="empty"><p>A estante de @${esc(ui.visit.apelido)} está vazia.</p></div>`;
+  else if (!source().size) empty.innerHTML = `<div class="empty"><div class="big">Estante vazia!</div><p>Adicione o primeiro mangá que você está lendo — nome, capítulo e, se quiser, uma capa.</p><button class="btn primary" id="emptyAdd">+ Adicionar mangá</button></div>`;
   else if (!arr.length) empty.innerHTML = `<div class="empty"><p>Nenhum mangá encontrado com esse filtro.</p></div>`;
   else empty.innerHTML = "";
 }
@@ -439,6 +468,11 @@ function openEditor(id) {
           <label class="f">Status<select name="status">${opts}</select></label>
         </div>
         <label class="f">Link do site onde você lê <span style="font-weight:500;color:var(--muted)">(opcional)</span><input name="link" inputmode="url" placeholder="https://…" value="${esc(it ? it.link || "" : "")}"></label>
+        <div class="two">
+          <label class="f">Sua nota <span style="font-weight:500;color:var(--muted)">(opcional)</span><select name="nota"><option value="">Sem nota</option>${NOTAS.map(n => `<option value="${n}" ${it && parseNota(it.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select></label>
+          <span></span>
+        </div>
+        <label class="f">Comentário <span style="font-weight:500;color:var(--muted)">(opcional · aparece no seu perfil público)</span><textarea name="comentario" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
         <div>
           <div style="font-size:13px;font-weight:700;margin-bottom:6px">Capa <span style="font-weight:500;color:var(--muted)">(opcional)</span></div>
           <div class="cover-edit">
@@ -518,7 +552,8 @@ function openEditor(id) {
       const rawLink = String(fd.get("link") || "").trim();
       const link = fixLink(rawLink);
       if (rawLink && !link) { toast("Esse link não parece válido."); return; }
-      const data = { title, chapter, status: String(fd.get("status")), link, cover };
+      const data = { title, chapter, status: String(fd.get("status")), link, cover,
+        nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
       if (it) {
         const patch = { ...data };
         if (chapter !== (Number(it.chapter) || 0)) patch.lastReadAt = Date.now();
@@ -572,7 +607,8 @@ function openMenu() {
     <div class="mbody">
       <div class="acct"><div><b>${esc(u.email || "Sua conta")}</b><small>${isAdmin(u) ? "👑 Administrador" : "Conta conectada"}</small></div></div>
       <div class="menu-list">
-        ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button>` : ""}
+        ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button>` : ""}
+        <button class="btn" id="mSupport">🛠️ Reportar problema</button>
         <button class="btn" id="mExport">💾 ${isNativeApp ? "Copiar backup" : "Baixar backup (arquivo .json)"}</button>
         <button class="btn" id="mImport">📂 Restaurar backup</button>
         <button class="btn danger" id="mOut">Sair da conta (apaga a cópia deste aparelho)</button>
@@ -581,6 +617,8 @@ function openMenu() {
     </div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const ab = root.querySelector("#mAdmin"); if (ab) ab.onclick = openAdmin;
+    const rb = root.querySelector("#mReports"); if (rb) rb.onclick = openReports;
+    root.querySelector("#mSupport").onclick = openSupport;
     root.querySelector("#mExport").onclick = async () => {
       const data = JSON.stringify({ app: "estante-mangas", exportedAt: new Date().toISOString(), mangas: [...items.values()].map(clean) }, null, 2);
       if (isNativeApp) { toast(await copyText(data) ? "Backup copiado! Cole num bloco de notas ou mande para você mesmo." : "Não consegui copiar.", 5000); return; }
@@ -673,12 +711,288 @@ function openAdmin() {
     return () => { if (unsubInv) unsubInv(); };
   });
 }
+// ---------- sino de capítulos novos (no topo) ----------
+function markSeen(id) { const c = chk[id]; if (c && c.latest != null) { c.seen = c.latest; saveChk(); setTimeout(render, 300); } }
+function bellList() { return [...items.values()].map(it => ({ it, n: unreadBadge(it) })).filter(x => x.n > 0); }
+function updateBell() {
+  const list = bellList();
+  $("#bellBtn").classList.toggle("hidden", !list.length);
+  $("#bellCnt").textContent = list.length > 9 ? "9+" : String(list.length || "");
+}
+function openBell() {
+  const list = bellList();
+  openModal(`
+    <div class="mhead"><h2>🔔 Capítulos novos</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">
+      ${list.length ? `<div class="menu-list">${list.map(({ it, n }) => `
+        <div class="acct" style="justify-content:space-between">
+          <div><b>${esc(it.title)}</b><small>+${n} ${n === 1 ? "capítulo novo" : "capítulos novos"} · você parou no ${fmtCap(it.chapter)}</small></div>
+          ${fixLink(it.link) ? `<a class="mini read" data-seen="${esc(it.id)}" href="${esc(fixLink(it.link))}" target="_blank" rel="noopener noreferrer">Ler ↗</a>` : ""}
+        </div>`).join("")}</div>` : `<p class="hint">Nenhum capítulo novo por enquanto.</p>`}
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => { markSeen(a.dataset.seen); setTimeout(() => { if (!bellList().length) closeModal(); else openBell(); }, 350); }));
+  });
+}
+
+// ---------- ⓘ detalhes do mangá (nota, comentário, link, notas dos visitantes) ----------
+function avalsOf(mid) { return ui.visit ? (ui.visit.avals[mid] || {}) : (myAvals[mid] || {}); }
+function openInfo(mid) {
+  const visit = ui.visit, it = source().get(mid); if (!it) return;
+  const nota = parseNota(it.nota), lk = fixLink(it.link);
+  const me = currentUser.uid, avals = avalsOf(mid);
+  const lista = Object.entries(avals).map(([uid, v]) => ({ uid, ...v })).filter(v => parseNota(v.nota)).sort((a, b) => (b.em || 0) - (a.em || 0));
+  const m = media(lista.map(v => parseNota(v.nota)));
+  const minha = visit ? avals[me] : null;
+  const cheio = lista.length >= 10 && !minha;
+  const jaTenho = visit && [...items.values()].some(x => norm(x.title) === norm(it.title));
+  openModal(`
+    <div class="mhead"><h2>${esc(it.title)}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">
+      <div class="infogrid">
+        <div class="ibox"><small>${visit ? "NOTA DE @" + esc(visit.apelido).toUpperCase() : "SUA NOTA"}</small><b>${nota ? "⭐ " + fmtNota(nota) : "—"}</b></div>
+        <div class="ibox"><small>LEU ATÉ O CAP.</small><b>${fmtCap(it.chapter)}</b></div>
+        <div class="ibox"><small>STATUS</small><b class="st"><span class="badge s-${stOf(it)}" style="position:static"><i></i>${STATUS[stOf(it)].label}</span></b></div>
+      </div>
+      <div class="comment">${it.comentario ? "💬 " + esc(it.comentario) : `<span class="hint">Sem comentário.</span>`}</div>
+      ${lk ? `<a class="btn" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" ${visit ? "" : `data-seen="${esc(mid)}"`}>🔗 Abrir o site onde ${visit ? "ele lê" : "você lê"} ↗</a>` : ""}
+      <div class="sect">
+        <div class="secth">Notas dos visitantes <span>${lista.length}/10</span></div>
+        ${lista.length ? `<div class="menu-list">${lista.map(v => `
+          <div class="acct rrow" data-uid="${esc(v.uid)}"><div><b>@${esc(v.apelido || "?")}</b></div><div class="rv">⭐ ${fmtNota(parseNota(v.nota))}${!visit ? `<button class="mini" data-rm="${esc(v.uid)}" title="Remover esta nota">✕</button>` : ""}</div></div>`).join("")}</div>
+          <div class="avg">Média dos visitantes: <b>⭐ ${fmtNota(m)}</b></div>`
+          : `<p class="hint">${visit ? "Ninguém avaliou ainda. Seja o primeiro!" : "Quando alguém visitar seu perfil público, as notas aparecem aqui."}</p>`}
+      </div>
+      ${visit ? `
+      <div class="sect">
+        <div class="secth">Sua nota para este mangá</div>
+        ${!myProfile || !myProfile.apelido ? `<p class="hint">Para avaliar, crie seu apelido em 👤 Pessoas.</p>`
+          : cheio ? `<p class="hint">Este mangá já recebeu 10 notas, o limite.</p>`
+          : `<div class="urlrow"><select id="myNota" class="f-sel"><option value="">Escolha…</option>${NOTAS.map(n => `<option value="${n}" ${minha && parseNota(minha.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select><button class="btn primary" id="saveNota">${minha ? "Atualizar" : "Avaliar"}</button></div>
+             ${minha ? `<button class="btn ghost" id="rmNota">Remover minha nota</button>` : ""}`}
+      </div>
+      <button class="btn ${jaTenho ? "" : "primary"}" id="copyShelf" ${jaTenho ? "disabled" : ""}>${jaTenho ? "✓ Já está na sua estante" : "＋ Adicionar à minha estante (Na fila)"}</button>`
+      : `<button class="btn" id="editIt">✎ Editar este mangá</button>`}
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => markSeen(a.dataset.seen)));
+    const ed = root.querySelector("#editIt"); if (ed) ed.onclick = () => openEditor(mid);
+    root.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remover?"; return; }
+      try { await updateDoc(doc(db, "users", me, "avaliacoes", mid), { [`notas.${b.dataset.rm}`]: deleteField() }); toast("Nota removida."); setTimeout(() => openInfo(mid), 300); }
+      catch (e) { toast("Não foi possível remover."); }
+    });
+    const sv = root.querySelector("#saveNota");
+    if (sv) sv.onclick = async () => {
+      const n = parseNota(root.querySelector("#myNota").value); if (!n) { toast("Escolha uma nota."); return; }
+      sv.disabled = true;
+      try {
+        await setDoc(doc(db, "users", visit.uid, "avaliacoes", mid), { notas: { [me]: { nota: n, apelido: myProfile.apelido, em: Date.now() } } }, { merge: true });
+        await refreshVisitAval(mid); toast("Nota enviada!"); openInfo(mid);
+      } catch (e) { sv.disabled = false; toast(e.code === "permission-denied" ? "Não foi possível avaliar (limite de 10 notas ou perfil ficou privado)." : "Falha ao enviar a nota."); }
+    };
+    const rn = root.querySelector("#rmNota");
+    if (rn) rn.onclick = async () => {
+      try { await updateDoc(doc(db, "users", visit.uid, "avaliacoes", mid), { [`notas.${me}`]: deleteField() }); await refreshVisitAval(mid); toast("Sua nota foi removida."); openInfo(mid); }
+      catch (e) { toast("Não foi possível remover."); }
+    };
+    const cp = root.querySelector("#copyShelf");
+    if (cp && !jaTenho) cp.onclick = () => {
+      create({ title: it.title, cover: safeCover(it.cover), link: fixLink(it.link), status: "fila", chapter: 0, nota: null, comentario: "" });
+      toast("Adicionado à sua estante em Na fila!"); openInfo(mid);
+    };
+  });
+}
+
+// ---------- 👤 pessoas: seu perfil + busca ----------
+const safeFoto = (f) => /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(String(f || "")) && String(f).length <= 60000 ? f : "";
+function avatarHTML(foto, apelido, cls = "") {
+  const f = safeFoto(foto);
+  return f ? `<img class="av ${cls}" src="${esc(f)}" alt="">` : `<span class="av ${cls} avph">${esc((apelido || "?").slice(0, 1).toUpperCase())}</span>`;
+}
+async function imageToAvatar(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const S = 192, c = document.createElement("canvas"); c.width = S; c.height = S;
+    const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, S, S);
+    for (const q of [0.88, 0.75, 0.6]) { let o = c.toDataURL("image/webp", q); if (!o.startsWith("data:image/webp")) o = c.toDataURL("image/jpeg", q); if (o.length <= 60000) return o; }
+    return c.toDataURL("image/jpeg", 0.5);
+  } finally { URL.revokeObjectURL(url); }
+}
+const perfilData = (patch) => ({ apelido: (myProfile && myProfile.apelido) || "", publico: !!(myProfile && myProfile.publico), foto: safeFoto(myProfile && myProfile.foto), atualizadoEm: Date.now(), ...patch });
+function updateMeBtn() {
+  const b = $("#peopleBtn"); const f = myProfile && safeFoto(myProfile.foto);
+  b.innerHTML = f ? `<img class="av" src="${esc(f)}" alt="">` : "👤";
+  b.classList.toggle("hasav", !!f);
+}
+const APELIDO_RE = /^[a-z0-9_.]{3,20}$/;
+function openPeople() {
+  let perfis = null;
+  const p = myProfile || {};
+  openModal(`
+    <div class="mhead"><h2>👤 Pessoas</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">
+      <div class="sect">
+        <div class="secth">Seu perfil</div>
+        <div class="me">
+          ${avatarHTML(p.foto, p.apelido, "big")}
+          <div class="mebtns">
+            <button type="button" class="btn" id="fotoBtn" ${p.apelido ? "" : "disabled"}>📷 ${safeFoto(p.foto) ? "Trocar foto" : "Escolher foto"}</button>
+            ${safeFoto(p.foto) ? `<button type="button" class="btn ghost" id="fotoRm">Remover foto</button>` : ""}
+            ${p.apelido ? "" : `<small class="hint">Escolha um apelido primeiro.</small>`}
+          </div>
+        </div>
+        <form id="apForm" class="urlrow" autocomplete="off"><input name="ap" maxlength="20" placeholder="seu apelido (ex.: daniel)" value="${esc(p.apelido || "")}"><button class="btn primary" type="submit">Salvar</button></form>
+        <p class="hint">Só letras minúsculas, números, ponto e _ (3 a 20). Cada apelido é único.</p>
+        <label class="switch"><input type="checkbox" id="pubT" ${p.publico ? "checked" : ""} ${p.apelido ? "" : "disabled"}><span class="sl"></span><span>Perfil público <small>${p.publico ? "— outras pessoas podem achar e ver sua estante" : "— ninguém encontra você"}</small></span></label>
+      </div>
+      <div class="sect">
+        <div class="secth">Encontrar pessoas</div>
+        <div class="search" style="height:42px">🔍<input id="pq" type="search" placeholder="Buscar apelido…" autocomplete="off"></div>
+        <div id="plist" class="menu-list"><div class="hint">Carregando…</div></div>
+      </div>
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const plist = root.querySelector("#plist"), pq = root.querySelector("#pq");
+    const draw = () => {
+      if (!perfis) return;
+      const q = norm(pq.value).replace(/^@/, "");
+      const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || x.apelido.includes(q)));
+      plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}">${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
+        : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
+    };
+    getDocs(query(collection(db, "perfis"), where("publico", "==", true)))
+      .then(snap => { perfis = snap.docs.map(d => ({ uid: d.id, apelido: String((d.data() || {}).apelido || ""), foto: (d.data() || {}).foto || "" })).filter(x => x.apelido).sort((a, b) => a.apelido.localeCompare(b.apelido)); draw(); })
+      .catch(() => { plist.innerHTML = `<div class="err">Não consegui buscar agora. Verifique a internet.</div>`; });
+    pq.addEventListener("input", draw);
+    plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
+    const fb = root.querySelector("#fotoBtn");
+    if (fb) fb.onclick = () => { const f = $("#file"); f.value = ""; f.onchange = async () => {
+      if (!f.files[0]) return;
+      try { const foto = await imageToAvatar(f.files[0]); await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople(); }
+      catch (x) { toast("Não foi possível salvar a foto."); }
+    }; f.click(); };
+    const fr = root.querySelector("#fotoRm");
+    if (fr) fr.onclick = async () => { try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto: "" })); myProfile = { ...myProfile, foto: "" }; updateMeBtn(); openPeople(); } catch (x) { toast("Não foi possível remover."); } };
+    root.querySelector("#apForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const novo = e.target.ap.value.trim().toLowerCase().replace(/^@/, "");
+      if (!APELIDO_RE.test(novo)) { toast("Apelido inválido: use 3 a 20 letras minúsculas, números, ponto ou _."); return; }
+      const atual = myProfile && myProfile.apelido;
+      if (novo === atual) { toast("Esse já é o seu apelido."); return; }
+      try {
+        const ex = await getDoc(doc(db, "apelidos", novo));
+        if (ex.exists() && (ex.data() || {}).uid !== currentUser.uid) { toast(`O apelido "${novo}" já está em uso. Tente outro, como ${novo}2.`, 4500); return; }
+        const b = writeBatch(db);
+        if (!ex.exists()) b.set(doc(db, "apelidos", novo), { uid: currentUser.uid });
+        if (atual) b.delete(doc(db, "apelidos", atual));
+        b.set(doc(db, "perfis", currentUser.uid), perfilData({ apelido: novo }));
+        await b.commit();
+        myProfile = { ...(myProfile || {}), apelido: novo, publico: !!(myProfile && myProfile.publico) };
+        toast("Apelido salvo: @" + novo); openPeople();
+      } catch (x) { toast(x.code === "permission-denied" ? `O apelido "${novo}" já está em uso.` : "Não foi possível salvar agora."); }
+    });
+    const pt = root.querySelector("#pubT");
+    pt.addEventListener("change", async () => {
+      if (!myProfile || !myProfile.apelido) { pt.checked = false; return; }
+      try {
+        await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ publico: pt.checked }));
+        myProfile = { ...myProfile, publico: pt.checked };
+        toast(pt.checked ? "Perfil público: agora te encontram em Pessoas." : "Perfil privado: ninguém encontra você."); openPeople();
+      } catch (x) { pt.checked = !pt.checked; toast("Não foi possível alterar agora."); }
+    });
+  });
+}
+
+// ---------- estante de outra pessoa (só leitura) ----------
+async function refreshVisitAval(mid) {
+  if (!ui.visit) return;
+  const d = await getDoc(doc(db, "users", ui.visit.uid, "avaliacoes", mid));
+  ui.visit.avals[mid] = d.exists() ? ((d.data() || {}).notas || {}) : {};
+}
+async function openVisit(uid, apelido, foto) {
+  closeModal();
+  ui.visit = { uid, apelido, foto: foto || "", items: new Map(), avals: {}, loading: true };
+  ui.filter = "todos"; window.scrollTo(0, 0); render();
+  try {
+    const [ms, av] = await Promise.all([getDocs(collection(db, "users", uid, "mangas")), getDocs(collection(db, "users", uid, "avaliacoes"))]);
+    if (!ui.visit || ui.visit.uid !== uid) return;
+    ms.forEach(d => ui.visit.items.set(d.id, { id: d.id, ...d.data() }));
+    av.forEach(d => { ui.visit.avals[d.id] = (d.data() || {}).notas || {}; });
+    ui.visit.loading = false; render();
+  } catch (e) {
+    toast("Essa estante não está disponível (o perfil pode ter ficado privado).", 4000); closeVisit();
+  }
+}
+function closeVisit() { ui.visit = null; ui.filter = "todos"; window.scrollTo(0, 0); render(); }
+
+// ---------- suporte ----------
+function openSupport() {
+  openModal(`
+    <form id="supF">
+      <div class="mhead"><h2>🛠️ Reportar problema</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="mbody">
+        <p class="hint">Conte o que aconteceu e o que você estava fazendo. A versão do app e o tipo de aparelho vão junto automaticamente.</p>
+        <label class="f">O que aconteceu?<textarea name="t" maxlength="1000" rows="6" required placeholder="Ex.: ao trocar a capa no celular, o app fechou sozinho."></textarea></label>
+      </div>
+      <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="submit" class="btn primary">Enviar</button></div>
+    </form>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelector("#supF").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const texto = e.target.t.value.trim().slice(0, 1000); if (!texto) return;
+      const plataforma = isNativeApp ? "Android" : window.estanteNative ? "Windows" : "Navegador";
+      try {
+        await addDoc(collection(db, "suporte"), { texto, uid: currentUser.uid, email: String(currentUser.email || ""), apelido: (myProfile && myProfile.apelido) || "", versao: String(window.APP_VERSION || 0), plataforma, criadoEm: Date.now(), resolvido: false });
+        closeModal(); toast("Enviado! Obrigado por avisar. 🙌", 3500);
+      } catch (x) { toast("Não foi possível enviar agora. Tente de novo com internet."); }
+    });
+  });
+}
+function openReports() {
+  let un = null;
+  openModal(`
+    <div class="mhead"><h2>🛠️ Relatos</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><div id="rlist" class="menu-list"><div class="hint">Carregando…</div></div></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const rl = root.querySelector("#rlist");
+    un = onSnapshot(collection(db, "suporte"), (snap) => {
+      const l = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.resolvido - b.resolvido) || (b.criadoEm || 0) - (a.criadoEm || 0));
+      rl.innerHTML = l.length ? l.map(r => `
+        <div class="report ${r.resolvido ? "done" : ""}" data-id="${esc(r.id)}">
+          <div class="rmeta">${r.resolvido ? "✅" : "🟠"} <b>${esc(r.apelido ? "@" + r.apelido : r.email)}</b> · ${esc(r.plataforma)} · v1.${esc(r.versao)} · ${new Date(r.criadoEm || 0).toLocaleString("pt-BR")}</div>
+          <div class="rtext">${esc(r.texto)}</div>
+          <div class="ract">${r.resolvido ? "" : `<button class="mini" data-r="ok">✓ Resolvido</button>`}<button class="mini" data-r="del" style="color:var(--red)">Apagar</button></div>
+        </div>`).join("") : `<div class="hint">Nenhum relato. 🎉</div>`;
+    }, () => { rl.innerHTML = `<div class="err">Sem permissão para ver os relatos.</div>`; });
+    rl.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-r]"); if (!b) return;
+      const id = b.closest("[data-id]").dataset.id;
+      try {
+        if (b.dataset.r === "ok") await updateDoc(doc(db, "suporte", id), { resolvido: true });
+        else { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar?"; return; } await deleteDoc(doc(db, "suporte", id)); }
+      } catch (x) { toast("Não foi possível alterar."); }
+    });
+    return () => { if (un) un(); };
+  });
+}
+
 // ---------- eventos ----------
 $("#grid").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]"); if (!btn) return;
-  const id = btn.closest(".card").dataset.id; const it = items.get(id); if (!it) return;
-  const act = btn.dataset.act; const c = Number(it.chapter) || 0;
-  if (act === "read") { const c = chk[id]; if (c && c.latest != null) { c.seen = c.latest; saveChk(); setTimeout(render, 300); } return; }
+  const id = btn.closest(".card").dataset.id;
+  const act = btn.dataset.act;
+  if (ui.visit) {                       // estante de outra pessoa: só ver detalhes e abrir o site
+    if (act === "info") { e.preventDefault(); openInfo(id); }
+    return;
+  }
+  const it = items.get(id); if (!it) return;
+  const c = Number(it.chapter) || 0;
+  if (act === "read") { markSeen(id); return; }
+  if (act === "info") { e.preventDefault(); openInfo(id); return; }
   if (act === "plus") commit(id, { chapter: Math.floor(c) + 1, lastReadAt: Date.now() });
   else if (act === "minus") { if (c > 0) commit(id, { chapter: Math.max(0, Math.ceil(c) - 1), lastReadAt: Date.now() }); }
   else if (act === "goto") openGoto(id);
@@ -690,6 +1004,9 @@ $("#sort").addEventListener("change", (e) => { ui.sort = e.target.value; try { l
 $("#addBtn").addEventListener("click", () => openEditor(null));
 $("#empty").addEventListener("click", (e) => { if (e.target.id === "emptyAdd") openEditor(null); });
 $("#menuBtn").addEventListener("click", openMenu);
+$("#peopleBtn").addEventListener("click", openPeople);
+$("#bellBtn").addEventListener("click", openBell);
+$("#visitBack").addEventListener("click", closeVisit);
 window.addEventListener("beforeunload", (e) => { if (pending.size) { for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } } });
 document.addEventListener("visibilitychange", () => { if (document.hidden) for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } else render(); });
 

@@ -69,6 +69,8 @@
       <h1 class="logo"><span class="mark">ESTANTE</span> de mangás</h1>
       <div class="spacer"></div>
       <div class="sync" id="sync"><span class="dot"></span><span class="txt">Conectando…</span></div>
+      <button class="icon-btn bell hidden" id="bellBtn" title="Capítulos novos">🔔<span class="cnt" id="bellCnt"></span></button>
+      <button class="icon-btn" id="peopleBtn" title="Pessoas">👤</button>
       <button class="icon-btn" id="menuBtn" title="Menu">☰</button>
     </div>
     <div class="tools">
@@ -78,11 +80,13 @@
           <option value="recent">Mais recentes</option>
           <option value="name">Nome A–Z</option>
           <option value="stale">Parados há mais tempo</option>
+          <option value="nota">Melhores notas</option>
         </select>
       </div>
       <div class="chips" id="chips"></div>
     </div>
   </header>
+  <div class="visitbar hidden" id="visitBar"><span class="vb"><span id="visitAv"></span><span>Estante de <b id="visitName"></b></span></span><button class="btn" id="visitBack">← Minha estante</button></div>
   <div class="banner" id="banner"></div>
   <main>
     <div id="grid" class="grid"></div>
