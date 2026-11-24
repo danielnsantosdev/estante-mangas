@@ -1,5 +1,5 @@
 rules_version = '2';
-// Regras de segurança da Estante de Mangás.
+// Regras de segurança da Estante de Mangás (v3).
 // Elas rodam no servidor do Google: nem o app nem ninguém consegue passar por cima delas.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -19,26 +19,35 @@ service cloud.firestore {
     }
     // Pode usar o app (convidado ou administrador).
     function acesso() { return convidado() || admin(); }
-    // É o dono desta estante?
+    // É o dono destes dados?
     function dono(uid) { return request.auth != null && request.auth.uid == uid; }
-    // O perfil desta pessoa está público?
+    // O perfil desta pessoa está público e não foi ocultado (acesso removido)?
     function publico(uid) {
       return exists(/databases/$(database)/documents/perfis/$(uid))
-        && get(/databases/$(database)/documents/perfis/$(uid)).data.publico == true;
+        && get(/databases/$(database)/documents/perfis/$(uid)).data.publico == true
+        && get(/databases/$(database)/documents/perfis/$(uid)).data.get('oculto', false) == false;
     }
 
     // ---------- validações ----------
     function notaOk(n) { return n is number && n >= 1 && n <= 10 && math.floor(n * 2) == n * 2; }
-    function mangaValido() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario'])
-        && d.title is string && d.title.size() > 0 && d.title.size() <= 120
+    function texto(d, campo, max) { return !(campo in d) || (d[campo] is string && d[campo].size() <= max); }
+    function camposManga(d) {
+      return d.title is string && d.title.size() > 0 && d.title.size() <= 120
         && d.chapter is number && d.chapter >= 0 && d.chapter < 100000
         && d.status in ['lendo', 'fila', 'acumulando', 'pausado', 'concluido']
-        && (!('link' in d) || (d.link is string && d.link.size() <= 2000))
-        && (!('cover' in d) || (d.cover is string && d.cover.size() <= 400000))
+        && texto(d, 'link', 2000) && texto(d, 'cover', 400000)
         && (!('nota' in d) || d.nota == null || notaOk(d.nota))
-        && (!('comentario' in d) || (d.comentario is string && d.comentario.size() <= 300));
+        && texto(d, 'comentario', 300) && texto(d, 'catId', 40) && texto(d, 'titulo2', 200);
+    }
+    function mangaValido() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['title', 'titulo2', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario'])
+        && camposManga(d);
+    }
+    function lixeiraValida() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['title', 'titulo2', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm'])
+        && camposManga(d) && d.excluidoEm is number;
     }
     // Nota que um visitante deixa: { nota, apelido (o dele, de verdade), em }
     function avaliacaoOk(v) {
@@ -48,37 +57,52 @@ service cloud.firestore {
         && v.apelido == get(/databases/$(database)/documents/perfis/$(request.auth.uid)).data.apelido;
     }
 
-    // ---------- convidados (só o administrador gerencia) ----------
+    // ---------- convidados ----------
+    // Só o administrador libera e remove. A própria pessoa só pode gravar o seu "uid" (usado para ocultar/reativar o perfil).
     match /convidados/{email} {
       allow get: if admin() || (request.auth != null && request.auth.token.email.lower() == email);
       allow list, delete: if admin();
-      allow create, update: if admin()
+      allow create: if admin()
         && email.size() <= 200
-        && request.resource.data.keys().hasOnly(['nome', 'adicionadoEm'])
-        && (!('nome' in request.resource.data) || (request.resource.data.nome is string && request.resource.data.nome.size() <= 60));
+        && request.resource.data.keys().hasOnly(['nome', 'adicionadoEm', 'uid'])
+        && texto(request.resource.data, 'nome', 60);
+      allow update: if (admin()
+          && request.resource.data.keys().hasOnly(['nome', 'adicionadoEm', 'uid'])
+          && texto(request.resource.data, 'nome', 60))
+        || (request.auth != null && request.auth.token.email_verified == true
+          && request.auth.token.email.lower() == email
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid'])
+          && request.resource.data.uid == request.auth.uid);
     }
 
     // ---------- apelidos: nunca repetem ----------
-    // O documento tem o próprio apelido como nome. Criar só funciona se ainda não existir.
+    // O documento tem o apelido em minúsculas como nome ("daniel"). Criar só funciona se ainda não existir.
     match /apelidos/{nome} {
       allow get: if request.auth != null;
       allow create: if acesso()
-        && nome.matches('^[a-z0-9_.]{3,20}$')
+        && nome.matches('^[a-z0-9áàâãéêíóôõúüç]{3,20}$')
         && request.resource.data.keys().hasOnly(['uid'])
         && request.resource.data.uid == request.auth.uid;
       allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
     // ---------- perfis: apelido + foto + público/privado ----------
+    // "oculto" = acesso removido pelo administrador: some da busca e ninguém vê a estante (nada é apagado).
     match /perfis/{uid} {
-      allow get: if dono(uid) || (acesso() && resource.data.publico == true);
-      allow list: if acesso() && resource.data.publico == true;
+      allow get: if dono(uid) || (acesso() && resource.data.publico == true && resource.data.get('oculto', false) == false);
+      allow list: if acesso() && resource.data.publico == true && resource.data.oculto == false;
       allow create, update: if dono(uid) && acesso()
-        && request.resource.data.keys().hasOnly(['apelido', 'publico', 'foto', 'atualizadoEm'])
+        && request.resource.data.keys().hasOnly(['apelido', 'publico', 'foto', 'oculto', 'atualizadoEm'])
         && request.resource.data.apelido is string
+        && request.resource.data.apelido.matches('^[A-Za-z0-9áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ]{3,20}$')
         && request.resource.data.publico is bool
-        && (!('foto' in request.resource.data) || (request.resource.data.foto is string && request.resource.data.foto.size() <= 60000))
-        && getAfter(/databases/$(database)/documents/apelidos/$(request.resource.data.apelido)).data.uid == uid;
+        && request.resource.data.get('oculto', false) == false
+        && texto(request.resource.data, 'foto', 60000)
+        && getAfter(/databases/$(database)/documents/apelidos/$(request.resource.data.apelido.lower())).data.uid == uid;
+      // o administrador só pode mudar o "oculto"
+      allow update: if admin() && !dono(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['oculto'])
+        && request.resource.data.oculto is bool;
       allow delete: if dono(uid);
     }
 
@@ -86,8 +110,23 @@ service cloud.firestore {
     // O dono lê e escreve. Os outros só leem, e só se o perfil do dono estiver público.
     match /users/{uid}/mangas/{mangaId} {
       allow read: if (dono(uid) && acesso()) || (acesso() && publico(uid));
-      allow delete: if dono(uid) && acesso();
+      allow delete: if dono(uid);
       allow create, update: if dono(uid) && acesso() && mangaValido();
+    }
+
+    // ---------- lixeira (só o dono vê) ----------
+    match /users/{uid}/lixeira/{mangaId} {
+      allow read, delete: if dono(uid);
+      allow create, update: if dono(uid) && acesso() && lixeiraValida();
+    }
+
+    // ---------- lista das notas que EU dei nos mangás dos outros (só eu vejo) ----------
+    // Serve para, ao excluir a conta, remover só as minhas notas sem tocar no resto.
+    match /users/{uid}/minhasNotas/{id} {
+      allow read, delete: if dono(uid);
+      allow create, update: if dono(uid) && acesso()
+        && request.resource.data.keys().hasOnly(['dono', 'manga', 'em'])
+        && request.resource.data.dono is string && request.resource.data.manga is string;
     }
 
     // ---------- notas dos visitantes (máximo 10 por mangá) ----------
@@ -100,16 +139,43 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['notas'])
         && request.resource.data.notas.keys().hasOnly([request.auth.uid])
         && avaliacaoOk(request.resource.data.notas[request.auth.uid]);
-      allow update: if acesso() && request.resource.data.keys().hasOnly(['notas']) && (
+      allow update: if request.auth != null && request.resource.data.keys().hasOnly(['notas']) && (
         // o dono só pode remover notas
         (dono(uid) && request.resource.data.notas.keys().hasOnly(resource.data.notas.keys()))
         ||
-        // o visitante só mexe na própria nota, e no máximo 10 pessoas por mangá
-        (!dono(uid) && publico(uid)
+        // o visitante só pode REMOVER a própria nota (sempre permitido, para excluir a conta com segurança)
+        (!dono(uid)
+          && request.resource.data.notas.diff(resource.data.notas).affectedKeys().hasOnly([request.auth.uid])
+          && !(request.auth.uid in request.resource.data.notas))
+        ||
+        // o visitante dá ou troca a própria nota: no máximo 10 pessoas por mangá
+        (!dono(uid) && acesso() && publico(uid)
           && request.resource.data.notas.diff(resource.data.notas).affectedKeys().hasOnly([request.auth.uid])
           && request.resource.data.notas.size() <= 10
-          && (!(request.auth.uid in request.resource.data.notas) || avaliacaoOk(request.resource.data.notas[request.auth.uid])))
+          && avaliacaoOk(request.resource.data.notas[request.auth.uid]))
       );
+    }
+
+    // ---------- catálogo compartilhado (AniList / MyAnimeList, já em português) ----------
+    match /catalogo/{id} {
+      allow read: if acesso();
+      allow create: if acesso()
+        && id.matches('^(al|mal)[0-9]{1,10}$')
+        && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm'])
+        && request.resource.data.titulo is string && request.resource.data.titulo.size() > 0 && request.resource.data.titulo.size() <= 200
+        && texto(request.resource.data, 'titulo2', 200) && texto(request.resource.data, 'sinopse', 4000)
+        && texto(request.resource.data, 'sinopseOrig', 4000) && texto(request.resource.data, 'capa', 500)
+        && request.resource.data.generos is list && request.resource.data.generos.size() <= 15;
+      // só dá para completar a tradução de uma sinopse que ainda está pendente
+      allow update: if acesso() && resource.data.sinopse == ''
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sinopse', 'atualizadoEm'])
+        && texto(request.resource.data, 'sinopse', 4000);
+    }
+
+    // ---------- ranking (calculado todo dia 1 pelo GitHub; o app só lê) ----------
+    match /ranking/{id} {
+      allow read: if acesso();
+      allow write: if false;
     }
 
     // ---------- suporte: relatos de problemas ----------

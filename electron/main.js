@@ -52,6 +52,20 @@ ipcMain.handle("fetch-text", async (_e, url) => {
     return txt.slice(0, 3 * 1024 * 1024);
   } finally { clearTimeout(t); }
 });
+// Consultas ao catálogo (AniList, MyAnimeList, MangaDex) e ao tradutor. Só esses endereços são permitidos.
+const API_OK = ["graphql.anilist.co", "api.jikan.moe", "api.mangadex.org", "api.mymemory.translated.net"];
+ipcMain.handle("http", async (_e, req) => {
+  const { url, method = "GET", headers = {}, body } = req || {};
+  let host = ""; try { host = new URL(url).hostname; } catch (e) {}
+  if (!/^https:\/\//i.test(url) || !API_OK.includes(host)) throw new Error("endereço não permitido");
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const r = await net.fetch(url, { method, headers: { "User-Agent": "EstanteDeMangas/1.0", ...headers }, body: body || undefined, signal: ctrl.signal });
+    const txt = await r.text();
+    if (!r.ok) throw new Error("http " + r.status);
+    return txt.slice(0, 3 * 1024 * 1024);
+  } finally { clearTimeout(t); }
+});
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(() => { Menu.setApplicationMenu(null); createWindow(); });
 app.on("window-all-closed", () => app.quit());

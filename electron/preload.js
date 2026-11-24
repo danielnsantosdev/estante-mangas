@@ -2,4 +2,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("estanteNative", {
   fetchText: (url) => ipcRenderer.invoke("fetch-text", String(url || "")),
+  http: (req) => ipcRenderer.invoke("http", req || {}),
 });

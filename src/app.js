@@ -4,6 +4,7 @@ import {
   initializeAuth, indexedDBLocalPersistence, browserLocalPersistence,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification,
   sendPasswordResetEmail, onAuthStateChanged, signOut, reload,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword, deleteUser,
 } from "firebase/auth";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -169,7 +170,11 @@ async function checkInvite(user) {
   let invited = null;
   if (isAdmin(user)) invited = true;
   else {
-    try { invited = email ? (await getDoc(doc(db, "convidados", email))).exists() : false; }
+    try {
+      const cd = email ? await getDoc(doc(db, "convidados", email)) : null;
+      invited = !!(cd && cd.exists());
+      if (invited && (cd.data() || {}).uid !== user.uid) updateDoc(doc(db, "convidados", email), { uid: user.uid }).catch(() => {});
+    }
     catch (e) { invited = (e.code === "unavailable") ? null : false; } // sem internet: abre com o que está no aparelho
   }
   if (currentUser !== user) return;
@@ -211,10 +216,17 @@ $("#verifyOut").addEventListener("click", fullSignOut);
 function startSync(uid) {
   col = collection(db, "users", uid, "mangas");
   extraUnsubs.forEach(f => { try { f(); } catch (e) {} }); extraUnsubs = [];
-  extraUnsubs.push(onSnapshot(doc(db, "perfis", uid), (d) => { myProfile = d.exists() ? d.data() : null; updateMeBtn(); }, () => {}));
-  extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avaliacoes"), (snap) => {
-    const m = {}; snap.forEach(d => { m[d.id] = (d.data() || {}).notas || {}; }); myAvals = m;
+  extraUnsubs.push(onSnapshot(doc(db, "perfis", uid), (d) => {
+    myProfile = d.exists() ? d.data() : null; updateMeBtn();
+    // perfil antigo sem o campo "oculto", ou reativado pelo administrador: volta a aparecer
+    if (myProfile && myProfile.apelido && myProfile.oculto !== false && !d.metadata.fromCache)
+      setDoc(doc(db, "perfis", uid), perfilData({})).catch(() => {});
   }, () => {}));
+  extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avaliacoes"), (snap) => {
+    const m = {}; snap.forEach(d => { m[d.id] = (d.data() || {}).notas || {}; }); myAvals = m; updateBell();
+  }, () => {}));
+  try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
+  limparLixeira(uid);
   render();
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
@@ -250,6 +262,8 @@ function clean(it) {
   const now = Date.now();
   const o = {
     title: String(it.title || "").trim().slice(0, 120) || "Sem nome",
+    titulo2: String(it.titulo2 || "").trim().slice(0, 200),
+    catId: /^(al|mal)[0-9]{1,10}$/.test(String(it.catId || "")) ? String(it.catId) : "",
     chapter: Math.min(99999, parseCap(it.chapter)),
     status: stOf(it),
     link: fixLink(it.link).slice(0, 2000),
@@ -273,7 +287,7 @@ function flush(id) {
   const p = it ? setDoc(doc(col, id), strip(it)) : deleteDoc(doc(col, id));
   p.catch(e => {
     if (e.code === "invalid-argument" || e.code === "resource-exhausted") toast("Não foi possível salvar: a imagem é grande demais.", 4000);
-    else if (e.code === "permission-denied") toast("Sem permissão para salvar. Confira as regras do Firestore.", 4000);
+    else if (e.code === "permission-denied") toast("O servidor recusou salvar. Confira se as regras novas foram publicadas no Firebase.", 5000);
     else toast("Falha ao salvar — tente de novo.", 3000);
   });
   updateSync();
@@ -288,7 +302,16 @@ function create(data) {
   items.set(id, { id, createdAt: now, updatedAt: now, lastReadAt: now, ...data });
   render(); scheduleWrite(id, 0);
 }
-function remove(id) { items.delete(id); render(); scheduleWrite(id, 0); }
+function remove(id) {
+  // Não apaga de vez: vai para a lixeira por 30 dias
+  const it = items.get(id); if (!it) return;
+  clearTimeout(pending.get(id)); pending.delete(id);
+  items.delete(id); render();
+  const b = writeBatch(db);
+  b.set(doc(db, "users", currentUser.uid, "lixeira", id), { ...clean(it), excluidoEm: Date.now() });
+  b.delete(doc(col, id));
+  b.commit().catch(() => toast("Não foi possível mover para a lixeira agora."));
+}
 
 // ---------- capítulos novos (confere ao abrir o app) ----------
 // Guarda, por aparelho, o último capítulo encontrado no site e o que já foi "visto" (ao tocar em Ler).
@@ -342,6 +365,164 @@ function unreadBadge(it) {
   return (c.latest > c.seen && c.latest > cur) ? Math.ceil(c.latest - cur) : 0;
 }
 
+// ---------- catálogo: AniList (principal) + MyAnimeList (reserva) + MangaDex (português) ----------
+async function httpReq(url, { method = "GET", headers = {}, body } = {}) {
+  if (window.estanteNative && window.estanteNative.http) return window.estanteNative.http({ url, method, headers, body });
+  const nh = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
+  if (nh) {
+    const r = await nh.request({ url, method, headers, data: body ? JSON.parse(body) : undefined, responseType: "text" });
+    if (r.status >= 400) throw new Error("http " + r.status);
+    return typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+  }
+  const r = await fetch(url, { method, headers, body });
+  if (!r.ok) throw new Error("http " + r.status);
+  return r.text();
+}
+const httpJSON = async (url, opt) => JSON.parse(await httpReq(url, opt));
+// Gêneros sempre em português (o que não estiver na lista não aparece)
+const GENEROS = {
+  "Action": "Ação", "Adventure": "Aventura", "Comedy": "Comédia", "Drama": "Drama", "Ecchi": "Ecchi", "Fantasy": "Fantasia",
+  "Horror": "Terror", "Mahou Shoujo": "Garota mágica", "Mecha": "Mecha", "Music": "Música", "Mystery": "Mistério",
+  "Psychological": "Psicológico", "Romance": "Romance", "Sci-Fi": "Ficção científica", "Slice of Life": "Cotidiano",
+  "Sports": "Esportes", "Supernatural": "Sobrenatural", "Thriller": "Suspense", "Suspense": "Suspense", "Avant Garde": "Vanguarda",
+  "Award Winning": "Premiado", "Boys Love": "Yaoi (BL)", "Girls Love": "Yuri (GL)", "Gourmet": "Culinária", "Shounen": "Shounen",
+  "Seinen": "Seinen", "Shoujo": "Shoujo", "Josei": "Josei", "Isekai": "Isekai", "Historical": "Histórico", "Martial Arts": "Artes marciais",
+  "Military": "Militar", "School": "Escolar", "Super Power": "Superpoderes", "Harem": "Harém", "Reverse Harem": "Harém reverso",
+  "Reincarnation": "Reencarnação", "Time Travel": "Viagem no tempo", "Workplace": "Trabalho", "Survival": "Sobrevivência",
+  "Love Polygon": "Triângulo amoroso", "Vampire": "Vampiros", "Mythology": "Mitologia", "Gore": "Violência explícita",
+  "Detective": "Detetive", "Samurai": "Samurais", "Space": "Espaço", "Strategy Game": "Estratégia", "Video Game": "Videogame",
+  "Villainess": "Vilã", "Iyashikei": "Iyashikei", "Adult Cast": "Elenco adulto", "Anthropomorphic": "Antropomórfico",
+  "CGDCT": "Garotas fofas", "Childcare": "Criação de filhos", "Combat Sports": "Esportes de combate", "Delinquents": "Delinquentes",
+  "Educational": "Educativo", "Gag Humor": "Humor", "High Stakes Game": "Jogos de alto risco", "Idols (Female)": "Ídolos",
+  "Idols (Male)": "Ídolos", "Medical": "Medicina", "Organized Crime": "Crime organizado", "Otaku Culture": "Cultura otaku",
+  "Performing Arts": "Artes cênicas", "Pets": "Animais de estimação", "Racing": "Corrida", "Romantic Subtext": "Romance sutil",
+  "Showbiz": "Mundo artístico", "Team Sports": "Esportes em equipe", "Visual Arts": "Artes visuais", "Urban Fantasy": "Fantasia urbana",
+  "Magical Sex Shift": "Troca de gênero", "Crossdressing": "Crossdressing", "Memoir": "Memórias", "Kids": "Infantil",
+};
+const generosPT = (lista) => [...new Set((lista || []).map(g => GENEROS[g]).filter(Boolean))].slice(0, 12);
+const TIPO = { JP: "Mangá", KR: "Manhwa", CN: "Manhua", TW: "Manhua" };
+const decodeHTML = (s) => { const t = document.createElement("textarea"); t.innerHTML = s; return t.value; };
+function limpaSinopse(s) {
+  return decodeHTML(String(s || ""))
+    .replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/~!.*?!~/gs, "")
+    .replace(/\((Source|Fonte)[^)]*\)/gi, "").replace(/\[Written by[^\]]*\]/gi, "").replace(/__|\*\*/g, "")
+    .replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500);
+}
+async function buscaAniList(q) {
+  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} coverImage{large} genres description(asHtml:false) countryOfOrigin format}}}`;
+  const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
+  return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.format !== "NOVEL").map(m => ({
+    key: m.idMal ? "mal" + m.idMal : "al" + m.id, alId: m.id, malId: m.idMal || null,
+    original: (m.title.romaji || m.title.english || "").trim(), ingles: (m.title.english || "").trim(),
+    capa: (m.coverImage && m.coverImage.large) || "", generos: generosPT(m.genres), desc: m.description || "",
+    tipo: TIPO[m.countryOfOrigin] || "Mangá",
+  }));
+}
+async function buscaMAL(q) {
+  const j = await httpJSON(`https://api.jikan.moe/v4/manga?q=${encodeURIComponent(q)}&limit=10&sfw=true`);
+  return (j.data || []).filter(m => !/novel/i.test(m.type || "")).map(m => ({
+    key: "mal" + m.mal_id, alId: null, malId: m.mal_id,
+    original: (m.title || "").trim(), ingles: (m.title_english || "").trim(),
+    capa: (m.images && m.images.jpg && m.images.jpg.large_image_url) || "",
+    generos: generosPT([...(m.genres || []), ...(m.themes || []), ...(m.demographics || [])].map(g => g.name)),
+    desc: m.synopsis || "", tipo: /manhwa/i.test(m.type || "") ? "Manhwa" : /manhua/i.test(m.type || "") ? "Manhua" : "Mangá",
+  }));
+}
+async function buscaCatalogo(q) {
+  let r = [];
+  try { r = await buscaAniList(q); } catch (e) {}
+  if (!r.length) { try { r = await buscaMAL(q); } catch (e) {} }
+  return r;
+}
+// Tradução automática (inglês → português), em pedaços de até ~450 caracteres
+async function traduzPT(texto) {
+  texto = String(texto || "").trim(); if (!texto) return "";
+  const partes = []; let atual = "";
+  for (const frase of texto.split(/(?<=[.!?])\s+|\n+/)) {
+    if ((atual + " " + frase).length > 450) { if (atual) partes.push(atual); atual = frase.slice(0, 450); }
+    else atual = atual ? atual + " " + frase : frase;
+  }
+  if (atual) partes.push(atual);
+  const out = [];
+  for (const p of partes) {
+    const j = await httpJSON(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(p)}&langpair=en|pt-BR`);
+    const t = j && j.responseData && j.responseData.translatedText;
+    if (!t || Number(j.responseStatus) !== 200 || /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID/i.test(t)) throw new Error("tradução indisponível");
+    out.push(decodeHTML(t));
+  }
+  return out.join(" ").replace(/\s+\n/g, "\n").trim();
+}
+// Procura no MangaDex o mesmo mangá, para pegar nome e sinopse em português quando existirem
+async function mangaDexPT(r) {
+  try {
+    const j = await httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(r.original)}&contentRating[]=safe&contentRating[]=suggestive`);
+    const m = (j.data || []).find(x => { const l = (x.attributes && x.attributes.links) || {}; return (r.alId && String(l.al) === String(r.alId)) || (r.malId && String(l.mal) === String(r.malId)); });
+    if (!m) return {};
+    const alt = (m.attributes.altTitles || []).find(t => t["pt-br"]);
+    return { titulo: alt ? alt["pt-br"] : "", sinopse: (m.attributes.description || {})["pt-br"] || "" };
+  } catch (e) { return {}; }
+}
+const catCache = {};
+async function lerCatalogo(key) {
+  if (!key) return null;
+  if (catCache[key]) return catCache[key];
+  try { const d = await getDoc(doc(db, "catalogo", key)); if (d.exists()) return (catCache[key] = d.data()); } catch (e) {}
+  return null;
+}
+// Garante que o mangá escolhido está no catálogo compartilhado, já em português
+async function prepararCatalogo(r) {
+  const salvo = await lerCatalogo(r.key);
+  if (salvo) return salvo;
+  const pt = await mangaDexPT(r);
+  const orig = limpaSinopse(r.desc);
+  let sinopse = limpaSinopse(pt.sinopse || "");
+  if (!sinopse && orig) { try { sinopse = await traduzPT(orig); } catch (e) { sinopse = ""; } }
+  const titulo2 = (pt.titulo && norm(pt.titulo) !== norm(r.original) ? pt.titulo : (r.ingles && norm(r.ingles) !== norm(r.original) ? r.ingles : "")).slice(0, 200);
+  const c = { titulo: r.original.slice(0, 200), titulo2, generos: r.generos, sinopse: sinopse.slice(0, 4000), sinopseOrig: sinopse ? "" : orig.slice(0, 4000),
+    capa: String(r.capa || "").slice(0, 500), tipo: r.tipo, alId: r.alId || null, malId: r.malId || null, atualizadoEm: Date.now() };
+  try { await setDoc(doc(db, "catalogo", r.key), c); } catch (e) {}
+  return (catCache[r.key] = c);
+}
+// Tenta completar uma sinopse que ficou pendente (sem nunca mostrar inglês)
+async function completarSinopse(key, c) {
+  if (!c || c.sinopse || !c.sinopseOrig) return c;
+  try {
+    const s = (await traduzPT(c.sinopseOrig)).slice(0, 4000);
+    if (s) { await updateDoc(doc(db, "catalogo", key), { sinopse: s, atualizadoEm: Date.now() }); c = { ...c, sinopse: s }; catCache[key] = c; }
+  } catch (e) {}
+  return c;
+}
+// Componente de busca no catálogo (usado no "Novo mangá" e no "Vincular ao catálogo")
+function montarBuscaCatalogo(root, inicial, aoEscolher) {
+  const box = root.querySelector("#catBox");
+  box.innerHTML = `
+    <div class="urlrow"><input id="catQ" placeholder="Buscar no catálogo (ex.: Kimetsu, Demon Slayer)" value="${esc(inicial || "")}"><button type="button" class="btn primary" id="catGo">🔎</button></div>
+    <div id="catRes" class="catres"></div>`;
+  const q = box.querySelector("#catQ"), res = box.querySelector("#catRes");
+  const buscar = async () => {
+    const termo = q.value.trim(); if (termo.length < 2) { toast("Digite pelo menos 2 letras."); return; }
+    if (!navigator.onLine) { res.innerHTML = `<div class="hint">Sem internet: a busca no catálogo precisa de conexão.</div>`; return; }
+    res.innerHTML = `<div class="hint">Buscando…</div>`;
+    const lista = await buscaCatalogo(termo);
+    res.innerHTML = lista.length ? lista.map((r, i) => `
+      <button type="button" class="catitem" data-i="${i}">
+        ${r.capa ? `<img src="${esc(r.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
+        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
+      </button>`).join("") + `<div class="hint">Não achou? Preencha manualmente abaixo.</div>`
+      : `<div class="hint">Nada encontrado no catálogo. Você pode preencher manualmente abaixo.</div>`;
+    res.querySelectorAll("[data-i]").forEach(b => b.onclick = async () => {
+      const r = lista[Number(b.dataset.i)];
+      res.innerHTML = `<div class="hint">Preparando "${esc(r.original)}" em português…</div>`;
+      const c = await prepararCatalogo(r);
+      aoEscolher(r.key, c);
+      res.innerHTML = "";
+    });
+  };
+  box.querySelector("#catGo").onclick = buscar;
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
+  if (inicial) buscar();
+}
+
 // ---------- renderização ----------
 const source = () => ui.visit ? ui.visit.items : items;
 function filtered() {
@@ -385,7 +566,7 @@ function cardHTML(it) {
   return `<article class="card" data-id="${esc(it.id)}">
     <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
-      <div class="title" title="${esc(it.title)}">${esc(it.title)}</div>
+      <div class="title" title="${esc(it.title)}${it.titulo2 ? " — " + esc(it.titulo2) : ""}"><span class="t1">${esc(it.title)}</span>${it.titulo2 ? `<span class="t2">${esc(it.titulo2)}</span>` : ""}</div>
       ${chap}
       ${foot}
     </div>
@@ -456,12 +637,18 @@ async function imageToCover(blob) {
 function openEditor(id) {
   const it = id ? items.get(id) : null;
   let cover = it ? it.cover || "" : "";
+  let catId = it ? it.catId || "" : "", titulo2 = it ? it.titulo2 || "" : "";
   let confirmDel = false;
   const opts = Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(it ? stOf(it) : "lendo") === k ? "selected" : ""}>${v.label}</option>`).join("");
   openModal(`
     <form id="ed" autocomplete="off">
       <div class="mhead"><h2>${it ? "Editar mangá" : "Novo mangá"}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
       <div class="mbody">
+        <div class="sect catsect">
+          <div class="secth">📚 Catálogo <span id="catStatus">${catId ? "vinculado ✓" : ""}</span></div>
+          <div id="catPick"></div>
+          <div id="catBox">${it ? `<button type="button" class="btn" id="catLink">🔗 ${catId ? "Trocar vínculo do catálogo" : "Vincular ao catálogo"}</button>` : ""}</div>
+        </div>
         <label class="f">Nome<input name="title" required maxlength="120" placeholder="Ex.: One Piece" value="${esc(it ? it.title : "")}"></label>
         <div class="two">
           <label class="f">Último capítulo lido<input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"></label>
@@ -498,6 +685,20 @@ function openEditor(id) {
     </form>`, (root) => {
     const prev = root.querySelector("#cprev");
     const titleInput = root.querySelector("[name=title]");
+    const pick = root.querySelector("#catPick");
+    const mostrarEscolha = (c) => {
+      pick.innerHTML = c ? `<div class="catchosen">${c.capa ? `<img src="${esc(c.capa)}" alt="" referrerpolicy="no-referrer">` : ""}<div><b>${esc(c.titulo)}</b>${c.titulo2 ? `<small>${esc(c.titulo2)}</small>` : ""}<em>${esc(c.tipo || "")}${(c.generos || []).length ? " · " + esc(c.generos.slice(0, 4).join(", ")) : ""}</em></div><button type="button" class="mini" id="catUnlink" title="Desvincular">✕</button></div>` : "";
+      const un = pick.querySelector("#catUnlink"); if (un) un.onclick = () => { catId = ""; titulo2 = ""; mostrarEscolha(null); root.querySelector("#catStatus").textContent = ""; };
+    };
+    const aoEscolher = (key, c) => {
+      catId = key; titulo2 = c.titulo2 || "";
+      titleInput.value = c.titulo; mostrarEscolha(c);
+      root.querySelector("#catStatus").textContent = "vinculado ✓";
+      if (!cover && c.capa) { cover = c.capa; paintCover(); }
+    };
+    if (catId) lerCatalogo(catId).then(c => c && mostrarEscolha(c));
+    if (!it) montarBuscaCatalogo(root, "", aoEscolher);
+    const cl = root.querySelector("#catLink"); if (cl) cl.onclick = () => montarBuscaCatalogo(root, it.title, aoEscolher);
     const paintCover = () => {
       prev.innerHTML = cover ? `<img src="${esc(cover)}" alt="" referrerpolicy="no-referrer">` : phHTML(titleInput.value || "?", 34);
       const im = prev.querySelector("img");
@@ -541,7 +742,7 @@ function openEditor(id) {
     const del = root.querySelector("#del");
     if (del) del.onclick = () => {
       if (!confirmDel) { confirmDel = true; del.textContent = "Confirmar exclusão?"; del.style.background = "var(--red)"; del.style.color = "#fff"; return; }
-      remove(id); closeModal(); toast("Mangá excluído.");
+      remove(id); closeModal(); toast("Movido para a lixeira (fica lá por 30 dias).", 3500);
     };
     root.querySelector("#ed").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -552,7 +753,7 @@ function openEditor(id) {
       const rawLink = String(fd.get("link") || "").trim();
       const link = fixLink(rawLink);
       if (rawLink && !link) { toast("Esse link não parece válido."); return; }
-      const data = { title, chapter, status: String(fd.get("status")), link, cover,
+      const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "",
         nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
       if (it) {
         const patch = { ...data };
@@ -561,7 +762,7 @@ function openEditor(id) {
       } else { create(data); toast("Adicionado à estante!"); }
       closeModal();
     });
-    if (!it) setTimeout(() => titleInput.focus(), 50);
+    if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); (q || titleInput).focus(); }, 50);
     return () => document.removeEventListener("paste", onPaste);
   });
 }
@@ -608,10 +809,13 @@ function openMenu() {
       <div class="acct"><div><b>${esc(u.email || "Sua conta")}</b><small>${isAdmin(u) ? "👑 Administrador" : "Conta conectada"}</small></div></div>
       <div class="menu-list">
         ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button>` : ""}
+        <button class="btn" id="mLix">🗑️ Lixeira</button>
         <button class="btn" id="mSupport">🛠️ Reportar problema</button>
+        <button class="btn" id="mSenha">🔑 Trocar senha</button>
         <button class="btn" id="mExport">💾 ${isNativeApp ? "Copiar backup" : "Baixar backup (arquivo .json)"}</button>
         <button class="btn" id="mImport">📂 Restaurar backup</button>
         <button class="btn danger" id="mOut">Sair da conta (apaga a cópia deste aparelho)</button>
+        <button class="btn ghost" id="mDel" style="color:var(--red)">Excluir minha conta</button>
       </div>
       <p class="hint">Seus mangás ficam salvos na sua conta e sincronizam entre todos os aparelhos em que você entrar. Sem internet, o app continua funcionando e envia as mudanças depois.</p>
     </div>`, (root) => {
@@ -619,6 +823,9 @@ function openMenu() {
     const ab = root.querySelector("#mAdmin"); if (ab) ab.onclick = openAdmin;
     const rb = root.querySelector("#mReports"); if (rb) rb.onclick = openReports;
     root.querySelector("#mSupport").onclick = openSupport;
+    root.querySelector("#mLix").onclick = openLixeira;
+    root.querySelector("#mSenha").onclick = openSenha;
+    root.querySelector("#mDel").onclick = openExcluirConta;
     root.querySelector("#mExport").onclick = async () => {
       const data = JSON.stringify({ app: "estante-mangas", exportedAt: new Date().toISOString(), mangas: [...items.values()].map(clean) }, null, 2);
       if (isNativeApp) { toast(await copyText(data) ? "Backup copiado! Cole num bloco de notas ou mande para você mesmo." : "Não consegui copiar.", 5000); return; }
@@ -666,7 +873,7 @@ function openAdmin() {
   openModal(`
     <div class="mhead"><h2>👑 Administrador</h2><button type="button" class="icon-btn" data-x>✕</button></div>
     <div class="mbody">
-      <p class="hint" style="font-size:13.5px">Só os e-mails desta lista conseguem usar o app (você sempre consegue). Cada pessoa vê apenas a própria estante.</p>
+      <p class="hint" style="font-size:13.5px">Só os e-mails desta lista conseguem usar o app (você sempre consegue). Ao remover alguém, o perfil some para todos, mas nada é apagado: se liberar de novo, a estante volta inteira.</p>
       <form id="invForm" class="mbody" style="padding:0;gap:10px" autocomplete="off">
         <label class="f">E-mail da pessoa<input name="email" type="email" required placeholder="amigo@gmail.com"></label>
         <label class="f">Nome <span style="font-weight:500;color:var(--muted)">(opcional)</span><input name="nome" maxlength="60" placeholder="Ex.: João"></label>
@@ -694,7 +901,13 @@ function openAdmin() {
       const email = b.closest("[data-email]").dataset.email;
       if (b.dataset.inv === "copy") { toast(await copyText(inviteText(email)) ? "Convite copiado! Cole no WhatsApp." : "Não consegui copiar."); return; }
       if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remover?"; b.style.background = "var(--red)"; b.style.color = "#fff"; return; }
-      try { await deleteDoc(doc(db, "convidados", email)); toast("Acesso removido."); } catch (x) { toast("Não foi possível remover."); }
+      try {
+        const cd = await getDoc(doc(db, "convidados", email));
+        const uid = cd.exists() ? (cd.data() || {}).uid : null;
+        if (uid) await updateDoc(doc(db, "perfis", uid), { oculto: true }).catch(() => {});
+        await deleteDoc(doc(db, "convidados", email));
+        toast("Acesso removido. O perfil ficou oculto; se liberar de novo, tudo volta.", 4500);
+      } catch (x) { toast("Não foi possível remover."); }
     });
     root.querySelector("#invForm").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -713,26 +926,178 @@ function openAdmin() {
 }
 // ---------- sino de capítulos novos (no topo) ----------
 function markSeen(id) { const c = chk[id]; if (c && c.latest != null) { c.seen = c.latest; saveChk(); setTimeout(render, 300); } }
+const AVAL_KEY = "estante-aval-visto";
+const avalVisto = () => { try { return Number(localStorage.getItem(AVAL_KEY)) || 0; } catch (e) { return 0; } };
 function bellList() { return [...items.values()].map(it => ({ it, n: unreadBadge(it) })).filter(x => x.n > 0); }
+function novasAvaliacoes() {
+  const desde = avalVisto(), out = [];
+  for (const [mid, notas] of Object.entries(myAvals)) {
+    const it = items.get(mid); if (!it) continue;
+    for (const v of Object.values(notas || {})) if ((v.em || 0) > desde && parseNota(v.nota)) out.push({ it, v });
+  }
+  return out.sort((a, b) => (b.v.em || 0) - (a.v.em || 0));
+}
 function updateBell() {
-  const list = bellList();
-  $("#bellBtn").classList.toggle("hidden", !list.length);
-  $("#bellCnt").textContent = list.length > 9 ? "9+" : String(list.length || "");
+  if (!$("#bellBtn")) return;
+  const n = bellList().length + novasAvaliacoes().length;
+  $("#bellBtn").classList.toggle("hidden", !n);
+  $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
 }
 function openBell() {
-  const list = bellList();
+  const caps = bellList(), avs = novasAvaliacoes();
   openModal(`
-    <div class="mhead"><h2>🔔 Capítulos novos</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mhead"><h2>🔔 Novidades</h2><button type="button" class="icon-btn" data-x>✕</button></div>
     <div class="mbody">
-      ${list.length ? `<div class="menu-list">${list.map(({ it, n }) => `
+      ${avs.length ? `<div class="secth">Avaliações novas</div><div class="menu-list">${avs.map(({ it, v }) => `
+        <button class="acct pbtn" data-info="${esc(it.id)}"><div><b>@${esc(v.apelido || "?")} deu ⭐ ${fmtNota(parseNota(v.nota))}</b><small>em ${esc(it.title)}</small></div></button>`).join("")}</div>` : ""}
+      ${caps.length ? `<div class="secth">Capítulos novos</div><div class="menu-list">${caps.map(({ it, n }) => `
         <div class="acct" style="justify-content:space-between">
           <div><b>${esc(it.title)}</b><small>+${n} ${n === 1 ? "capítulo novo" : "capítulos novos"} · você parou no ${fmtCap(it.chapter)}</small></div>
           ${fixLink(it.link) ? `<a class="mini read" data-seen="${esc(it.id)}" href="${esc(fixLink(it.link))}" target="_blank" rel="noopener noreferrer">Ler ↗</a>` : ""}
-        </div>`).join("")}</div>` : `<p class="hint">Nenhum capítulo novo por enquanto.</p>`}
+        </div>`).join("")}</div>` : ""}
+      ${!avs.length && !caps.length ? `<p class="hint">Nenhuma novidade por enquanto.</p>` : ""}
     </div>`, (root) => {
+    try { localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelectorAll("[data-info]").forEach(b => b.onclick = () => openInfo(b.dataset.info));
     root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => { markSeen(a.dataset.seen); setTimeout(() => { if (!bellList().length) closeModal(); else openBell(); }, 350); }));
+    return () => updateBell();
   });
+}
+
+// ---------- lixeira (30 dias) ----------
+const LIX_DIAS = 30;
+async function limparLixeira(uid) {
+  try {
+    const snap = await getDocs(collection(db, "users", uid, "lixeira"));
+    const limite = Date.now() - LIX_DIAS * 86400000;
+    for (const d of snap.docs) if (((d.data() || {}).excluidoEm || 0) < limite) {
+      await deleteDoc(doc(db, "users", uid, "lixeira", d.id)).catch(() => {});
+      await deleteDoc(doc(db, "users", uid, "avaliacoes", d.id)).catch(() => {});
+    }
+  } catch (e) {}
+}
+async function openLixeira() {
+  const uid = currentUser.uid;
+  openModal(`
+    <div class="mhead"><h2>🗑️ Lixeira</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><p class="hint">Mangás excluídos ficam aqui por ${LIX_DIAS} dias e depois somem de vez.</p><div id="lxl" class="menu-list"><div class="hint">Carregando…</div></div></div>`, async (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const box = root.querySelector("#lxl");
+    let lista = [];
+    const draw = () => {
+      box.innerHTML = lista.length ? lista.map(x => {
+        const dias = Math.max(0, LIX_DIAS - Math.floor((Date.now() - (x.excluidoEm || 0)) / 86400000));
+        return `<div class="acct" style="justify-content:space-between" data-id="${esc(x.id)}"><div><b>${esc(x.title)}</b><small>some em ${dias} ${dias === 1 ? "dia" : "dias"}</small></div>
+          <div style="display:flex;gap:6px;flex:none"><button class="mini read" data-l="rest">Restaurar</button><button class="mini" data-l="del" style="color:var(--red)">✕</button></div></div>`;
+      }).join("") : `<div class="hint">A lixeira está vazia.</div>`;
+    };
+    try { lista = (await getDocs(collection(db, "users", uid, "lixeira"))).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.excluidoEm || 0) - (a.excluidoEm || 0)); }
+    catch (e) { box.innerHTML = `<div class="err">Não consegui abrir a lixeira agora.</div>`; return; }
+    draw();
+    box.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-l]"); if (!b) return;
+      const id = b.closest("[data-id]").dataset.id, x = lista.find(y => y.id === id); if (!x) return;
+      try {
+        if (b.dataset.l === "rest") {
+          const m = { ...x }; delete m.id; delete m.excluidoEm;
+          const bt = writeBatch(db); bt.set(doc(col, id), clean(m)); bt.delete(doc(db, "users", uid, "lixeira", id)); await bt.commit();
+          toast("Restaurado na estante!");
+        } else {
+          if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar de vez?"; return; }
+          await deleteDoc(doc(db, "users", uid, "lixeira", id)); await deleteDoc(doc(db, "users", uid, "avaliacoes", id)).catch(() => {});
+          toast("Apagado de vez.");
+        }
+        lista = lista.filter(y => y.id !== id); draw();
+      } catch (x2) { toast("Não foi possível agora. Verifique a internet."); }
+    });
+  });
+}
+
+// ---------- trocar senha ----------
+function openSenha() {
+  openModal(`
+    <form id="sF" autocomplete="off">
+      <div class="mhead"><h2>🔑 Trocar senha</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="mbody">
+        <label class="f">Senha atual<input name="a" type="password" autocomplete="current-password" required></label>
+        <label class="f">Nova senha<input name="n" type="password" autocomplete="new-password" minlength="6" required></label>
+        <label class="f">Repita a nova senha<input name="n2" type="password" autocomplete="new-password" minlength="6" required></label>
+        <p class="hint">Esqueceu a senha atual? Saia da conta e use "Esqueci a senha" na tela de entrada.</p>
+      </div>
+      <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="submit" class="btn primary">Salvar</button></div>
+    </form>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelector("#sF").addEventListener("submit", async (e) => {
+      e.preventDefault(); const f = e.target;
+      if (f.n.value !== f.n2.value) { toast("As senhas novas não são iguais."); return; }
+      try {
+        await reauthenticateWithCredential(currentUser, EmailAuthProvider.credential(currentUser.email, f.a.value));
+        await updatePassword(currentUser, f.n.value);
+        closeModal(); toast("Senha trocada! Use a nova nos outros aparelhos.", 4000);
+      } catch (x) { toast(/wrong-password|invalid-credential/.test(x.code || "") ? "Senha atual incorreta." : authMsg(x), 4000); }
+    });
+  });
+}
+
+// ---------- excluir a própria conta (afeta só quem exclui) ----------
+async function apagarColecao(path) {
+  const snap = await getDocs(collection(db, ...path));
+  let b = writeBatch(db), n = 0;
+  for (const d of snap.docs) { b.delete(doc(db, ...path, d.id)); if (++n % 400 === 0) { await b.commit(); b = writeBatch(db); } }
+  await b.commit();
+}
+function openExcluirConta() {
+  openModal(`
+    <form id="xF" autocomplete="off">
+      <div class="mhead"><h2>⚠️ Excluir minha conta</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="mbody">
+        <p><b>Isso apaga para sempre:</b> sua estante, sua lixeira, seu perfil, seu apelido e as notas que você deu nos mangás de outras pessoas. As estantes dos outros não são alteradas.</p>
+        <p class="hint">Quer guardar seus mangás? Antes, use "Baixar backup" no menu.</p>
+        <label class="f">Sua senha<input name="a" type="password" autocomplete="current-password" required></label>
+        <label class="f">Digite EXCLUIR para confirmar<input name="c" required placeholder="EXCLUIR"></label>
+      </div>
+      <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="submit" class="btn danger" id="xGo">Excluir para sempre</button></div>
+    </form>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelector("#xF").addEventListener("submit", async (e) => {
+      e.preventDefault(); const f = e.target, me = currentUser.uid;
+      if (f.c.value.trim().toUpperCase() !== "EXCLUIR") { toast('Digite "EXCLUIR" para confirmar.'); return; }
+      const go = root.querySelector("#xGo"); go.disabled = true; go.textContent = "Excluindo…";
+      try { await reauthenticateWithCredential(currentUser, EmailAuthProvider.credential(currentUser.email, f.a.value)); }
+      catch (x) { go.disabled = false; go.textContent = "Excluir para sempre"; toast("Senha incorreta."); return; }
+      try {
+        // 1) remove SÓ a minha nota em cada mangá dos outros (o servidor não deixa mexer em mais nada)
+        const minhas = await getDocs(collection(db, "users", me, "minhasNotas"));
+        for (const d of minhas.docs) {
+          const x = d.data() || {};
+          await updateDoc(doc(db, "users", x.dono, "avaliacoes", x.manga), { [`notas.${me}`]: deleteField() }).catch(() => {});
+        }
+        // notas antigas (de antes desta versão): procura nos perfis públicos
+        try {
+          const ps = await getDocs(query(collection(db, "perfis"), where("publico", "==", true), where("oculto", "==", false)));
+          for (const p of ps.docs) {
+            if (p.id === me) continue;
+            const av = await getDocs(collection(db, "users", p.id, "avaliacoes")).catch(() => null);
+            if (!av) continue;
+            for (const a of av.docs) if (((a.data() || {}).notas || {})[me])
+              await updateDoc(doc(db, "users", p.id, "avaliacoes", a.id), { [`notas.${me}`]: deleteField() }).catch(() => {});
+          }
+        } catch (x) {}
+        // 2) apaga os meus dados
+        for (const c of ["minhasNotas", "mangas", "lixeira", "avaliacoes"]) await apagarColecao(["users", me, c]).catch(() => {});
+        if (myProfile && myProfile.apelido) await deleteDoc(doc(db, "apelidos", apKey(myProfile.apelido))).catch(() => {});
+        await deleteDoc(doc(db, "perfis", me)).catch(() => {});
+        // 3) apaga o login
+        await deleteUser(currentUser);
+        try { await terminate(db); await clearIndexedDbPersistence(db); } catch (x) {}
+        alertaFinal();
+      } catch (x) { go.disabled = false; go.textContent = "Excluir para sempre"; toast("Não foi possível concluir. Verifique a internet e tente de novo.", 4500); }
+    });
+  });
+}
+function alertaFinal() {
+  document.body.innerHTML = `<div class="login"><div class="login-box"><h1 class="logo"><span class="mark">ATÉ</span> logo</h1><p>Sua conta foi excluída. Obrigado por ter usado a Estante de Mangás.</p><button class="gbtn" onclick="location.reload()">Fechar</button></div></div>`;
 }
 
 // ---------- ⓘ detalhes do mangá (nota, comentário, link, notas dos visitantes) ----------
@@ -745,10 +1110,11 @@ function openInfo(mid) {
   const m = media(lista.map(v => parseNota(v.nota)));
   const minha = visit ? avals[me] : null;
   const cheio = lista.length >= 10 && !minha;
-  const jaTenho = visit && [...items.values()].some(x => norm(x.title) === norm(it.title));
+  const jaTenho = visit && [...items.values()].some(x => (it.catId && x.catId === it.catId) || norm(x.title) === norm(it.title));
   openModal(`
-    <div class="mhead"><h2>${esc(it.title)}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mhead"><h2>${esc(it.title)}${it.titulo2 ? `<small class="h2sub">${esc(it.titulo2)}</small>` : ""}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
     <div class="mbody">
+      ${it.catId ? `<div id="catInfo" class="catinfo"><div class="hint">Carregando informações do catálogo…</div></div>` : ""}
       <div class="infogrid">
         <div class="ibox"><small>${visit ? "NOTA DE @" + esc(visit.apelido).toUpperCase() : "SUA NOTA"}</small><b>${nota ? "⭐ " + fmtNota(nota) : "—"}</b></div>
         <div class="ibox"><small>LEU ATÉ O CAP.</small><b>${fmtCap(it.chapter)}</b></div>
@@ -776,6 +1142,13 @@ function openInfo(mid) {
     </div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => markSeen(a.dataset.seen)));
+    const ci = root.querySelector("#catInfo");
+    if (ci) lerCatalogo(it.catId).then(c => completarSinopse(it.catId, c)).then(c => {
+      if (!ci.isConnected) return;
+      if (!c) { ci.innerHTML = navigator.onLine ? "" : `<div class="hint">Sem internet: gêneros e sinopse aparecem quando conectar.</div>`; return; }
+      ci.innerHTML = `${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+        <div class="sinopse"><b>Sinopse</b>${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
+    });
     const ed = root.querySelector("#editIt"); if (ed) ed.onclick = () => openEditor(mid);
     root.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
       if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remover?"; return; }
@@ -788,17 +1161,18 @@ function openInfo(mid) {
       sv.disabled = true;
       try {
         await setDoc(doc(db, "users", visit.uid, "avaliacoes", mid), { notas: { [me]: { nota: n, apelido: myProfile.apelido, em: Date.now() } } }, { merge: true });
+        setDoc(doc(db, "users", me, "minhasNotas", visit.uid + "_" + mid), { dono: visit.uid, manga: mid, em: Date.now() }).catch(() => {});
         await refreshVisitAval(mid); toast("Nota enviada!"); openInfo(mid);
       } catch (e) { sv.disabled = false; toast(e.code === "permission-denied" ? "Não foi possível avaliar (limite de 10 notas ou perfil ficou privado)." : "Falha ao enviar a nota."); }
     };
     const rn = root.querySelector("#rmNota");
     if (rn) rn.onclick = async () => {
-      try { await updateDoc(doc(db, "users", visit.uid, "avaliacoes", mid), { [`notas.${me}`]: deleteField() }); await refreshVisitAval(mid); toast("Sua nota foi removida."); openInfo(mid); }
+      try { await updateDoc(doc(db, "users", visit.uid, "avaliacoes", mid), { [`notas.${me}`]: deleteField() }); deleteDoc(doc(db, "users", me, "minhasNotas", visit.uid + "_" + mid)).catch(() => {}); await refreshVisitAval(mid); toast("Sua nota foi removida."); openInfo(mid); }
       catch (e) { toast("Não foi possível remover."); }
     };
     const cp = root.querySelector("#copyShelf");
     if (cp && !jaTenho) cp.onclick = () => {
-      create({ title: it.title, cover: safeCover(it.cover), link: fixLink(it.link), status: "fila", chapter: 0, nota: null, comentario: "" });
+      create({ title: it.title, titulo2: it.titulo2 || "", catId: it.catId || "", cover: safeCover(it.cover), link: fixLink(it.link), status: "fila", chapter: 0, nota: null, comentario: "" });
       toast("Adicionado à sua estante em Na fila!"); openInfo(mid);
     };
   });
@@ -822,21 +1196,33 @@ async function imageToAvatar(blob) {
     return c.toDataURL("image/jpeg", 0.5);
   } finally { URL.revokeObjectURL(url); }
 }
-const perfilData = (patch) => ({ apelido: (myProfile && myProfile.apelido) || "", publico: !!(myProfile && myProfile.publico), foto: safeFoto(myProfile && myProfile.foto), atualizadoEm: Date.now(), ...patch });
+const perfilData = (patch) => ({ apelido: (myProfile && myProfile.apelido) || "", publico: !!(myProfile && myProfile.publico), foto: safeFoto(myProfile && myProfile.foto), oculto: false, atualizadoEm: Date.now(), ...patch });
 function updateMeBtn() {
   const b = $("#peopleBtn"); const f = myProfile && safeFoto(myProfile.foto);
   b.innerHTML = f ? `<img class="av" src="${esc(f)}" alt="">` : "👤";
   b.classList.toggle("hasav", !!f);
 }
-const APELIDO_RE = /^[a-z0-9_.]{3,20}$/;
-function openPeople() {
-  let perfis = null;
+// Apelido: letras (com acento) e números, 3 a 20. Mostra como a pessoa digitou ("Daniel"),
+// mas a checagem de repetido ignora maiúsculas ("Daniel" e "daniel" são o mesmo).
+const APELIDO_RE = /^[A-Za-z0-9áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ]{3,20}$/;
+const apKey = (a) => String(a || "").toLowerCase();
+// Filtro básico de palavrões/ofensas (compara sem acento e trocando números por letras: 0→o, 1→i, 3→e, 4→a, 5→s, 7→t)
+const AP_RUINS_CONTEM = ["caralho","buceta","boceta","viado","traveco","arrombad","vagabund","retardad","estupr","pedofil","nazis","hitler","nigger","nigga","faggot","xoxota","piroca","fuck","porra","merda","bosta","foder","fuder","cuzao","filhodaputa","putaria","prostitut","macacada","escravo","sapatao"];
+const AP_RUINS_IGUAL = ["puta","puto","cu","pica","rola","xota","bicha","macaco","crioulo","mongol","fdp","shit","bitch","cunt","whore","slut","retard","penis","vagina","pinto","cacete","corno","otario","idiota","imbecil","burro"];
+function apelidoOfensivo(a) {
+  const n = norm(a).replace(/0/g, "o").replace(/1/g, "i").replace(/3/g, "e").replace(/4/g, "a").replace(/5/g, "s").replace(/7/g, "t").replace(/[^a-z]/g, "");
+  return AP_RUINS_CONTEM.some(w => n.includes(w)) || AP_RUINS_IGUAL.some(w => n === w || n === w + "s");
+}
+const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const nomeMes = (m) => { const [a, b] = String(m || "").split("-").map(Number); return a && b ? `${MESES[b - 1]} de ${a}` : ""; };
+// 👤 vira "Comunidade": Meu perfil · Pessoas · Ranking
+function openPeople(tab = "perfil") {
   const p = myProfile || {};
-  openModal(`
-    <div class="mhead"><h2>👤 Pessoas</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody">
+  const offline = !navigator.onLine;
+  const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Pessoas"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
+  let corpo = "";
+  if (tab === "perfil") corpo = `
       <div class="sect">
-        <div class="secth">Seu perfil</div>
         <div class="me">
           ${avatarHTML(p.foto, p.apelido, "big")}
           <div class="mebtns">
@@ -845,55 +1231,53 @@ function openPeople() {
             ${p.apelido ? "" : `<small class="hint">Escolha um apelido primeiro.</small>`}
           </div>
         </div>
-        <form id="apForm" class="urlrow" autocomplete="off"><input name="ap" maxlength="20" placeholder="seu apelido (ex.: daniel)" value="${esc(p.apelido || "")}"><button class="btn primary" type="submit">Salvar</button></form>
-        <p class="hint">Só letras minúsculas, números, ponto e _ (3 a 20). Cada apelido é único.</p>
-        <label class="switch"><input type="checkbox" id="pubT" ${p.publico ? "checked" : ""} ${p.apelido ? "" : "disabled"}><span class="sl"></span><span>Perfil público <small>${p.publico ? "— outras pessoas podem achar e ver sua estante" : "— ninguém encontra você"}</small></span></label>
-      </div>
+        <form id="apForm" class="urlrow" autocomplete="off"><input name="ap" maxlength="20" placeholder="seu apelido (ex.: Daniel)" value="${esc(p.apelido || "")}"><button class="btn primary" type="submit">Salvar</button></form>
+        <p class="hint">Letras e números, de 3 a 20, sem símbolos. Cada apelido é único (Daniel e daniel contam como o mesmo).</p>
+        <label class="switch"><input type="checkbox" id="pubT" ${p.publico ? "checked" : ""} ${p.apelido ? "" : "disabled"}><span class="sl"></span><span>Perfil público <small>${p.publico ? "— outras pessoas podem achar e ver sua estante, e você entra no ranking" : "— ninguém encontra você e você não entra no ranking"}</small></span></label>
+      </div>`;
+  else if (tab === "pessoas") corpo = offline ? `<p class="hint">📴 Sem internet: a busca de pessoas precisa de conexão.</p>` : `
       <div class="sect">
-        <div class="secth">Encontrar pessoas</div>
         <div class="search" style="height:42px">🔍<input id="pq" type="search" placeholder="Buscar apelido…" autocomplete="off"></div>
         <div id="plist" class="menu-list"><div class="hint">Carregando…</div></div>
-      </div>
-    </div>`, (root) => {
+      </div>`;
+  else corpo = offline ? `<p class="hint">📴 Sem internet: o ranking precisa de conexão.</p>` : `<div id="rk"><div class="hint">Carregando ranking…</div></div>`;
+  openModal(`
+    <div class="mhead"><h2>👥 Comunidade</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">${tabs}${corpo}</div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
-    const plist = root.querySelector("#plist"), pq = root.querySelector("#pq");
-    const draw = () => {
-      if (!perfis) return;
-      const q = norm(pq.value).replace(/^@/, "");
-      const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || x.apelido.includes(q)));
-      plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}">${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
-        : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
-    };
-    getDocs(query(collection(db, "perfis"), where("publico", "==", true)))
-      .then(snap => { perfis = snap.docs.map(d => ({ uid: d.id, apelido: String((d.data() || {}).apelido || ""), foto: (d.data() || {}).foto || "" })).filter(x => x.apelido).sort((a, b) => a.apelido.localeCompare(b.apelido)); draw(); })
-      .catch(() => { plist.innerHTML = `<div class="err">Não consegui buscar agora. Verifique a internet.</div>`; });
-    pq.addEventListener("input", draw);
-    plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
+    root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => openPeople(b.dataset.tab));
+    if (tab === "pessoas" && !offline) montarPessoas(root);
+    if (tab === "ranking" && !offline) montarRanking(root);
+    if (tab !== "perfil") return;
     const fb = root.querySelector("#fotoBtn");
     if (fb) fb.onclick = () => { const f = $("#file"); f.value = ""; f.onchange = async () => {
       if (!f.files[0]) return;
-      try { const foto = await imageToAvatar(f.files[0]); await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople(); }
+      try { const foto = await imageToAvatar(f.files[0]); await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople("perfil"); }
       catch (x) { toast("Não foi possível salvar a foto."); }
     }; f.click(); };
     const fr = root.querySelector("#fotoRm");
-    if (fr) fr.onclick = async () => { try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto: "" })); myProfile = { ...myProfile, foto: "" }; updateMeBtn(); openPeople(); } catch (x) { toast("Não foi possível remover."); } };
+    if (fr) fr.onclick = async () => { try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto: "" })); myProfile = { ...myProfile, foto: "" }; updateMeBtn(); openPeople("perfil"); } catch (x) { toast("Não foi possível remover."); } };
     root.querySelector("#apForm").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const novo = e.target.ap.value.trim().toLowerCase().replace(/^@/, "");
-      if (!APELIDO_RE.test(novo)) { toast("Apelido inválido: use 3 a 20 letras minúsculas, números, ponto ou _."); return; }
+      const novo = e.target.ap.value.trim().replace(/^@/, "");
+      if (!APELIDO_RE.test(novo)) { toast("Use só letras e números (3 a 20), sem espaços nem símbolos.", 4000); return; }
+      if (apelidoOfensivo(novo)) { toast("Esse apelido não é permitido. Escolha outro, sem palavrões ou ofensas.", 4000); return; }
       const atual = myProfile && myProfile.apelido;
       if (novo === atual) { toast("Esse já é o seu apelido."); return; }
+      const key = apKey(novo), keyAtual = atual ? apKey(atual) : null;
+      let ex;
+      try { ex = await getDoc(doc(db, "apelidos", key)); }
+      catch (x) { toast("O servidor recusou. Confira se as regras novas foram publicadas no Firebase.", 5000); return; }
+      if (ex.exists() && (ex.data() || {}).uid !== currentUser.uid) { toast(`O apelido "${novo}" já está em uso. Tente outro, como ${novo}2.`, 4500); return; }
       try {
-        const ex = await getDoc(doc(db, "apelidos", novo));
-        if (ex.exists() && (ex.data() || {}).uid !== currentUser.uid) { toast(`O apelido "${novo}" já está em uso. Tente outro, como ${novo}2.`, 4500); return; }
         const b = writeBatch(db);
-        if (!ex.exists()) b.set(doc(db, "apelidos", novo), { uid: currentUser.uid });
-        if (atual) b.delete(doc(db, "apelidos", atual));
+        if (!ex.exists()) b.set(doc(db, "apelidos", key), { uid: currentUser.uid });
+        if (keyAtual && keyAtual !== key) b.delete(doc(db, "apelidos", keyAtual));
         b.set(doc(db, "perfis", currentUser.uid), perfilData({ apelido: novo }));
         await b.commit();
         myProfile = { ...(myProfile || {}), apelido: novo, publico: !!(myProfile && myProfile.publico) };
-        toast("Apelido salvo: @" + novo); openPeople();
-      } catch (x) { toast(x.code === "permission-denied" ? `O apelido "${novo}" já está em uso.` : "Não foi possível salvar agora."); }
+        toast("Apelido salvo: @" + novo); openPeople("perfil");
+      } catch (x) { toast(x.code === "permission-denied" ? "O servidor recusou. Confira se as regras novas foram publicadas no Firebase." : "Não foi possível salvar agora. Verifique a internet.", 5000); }
     });
     const pt = root.querySelector("#pubT");
     pt.addEventListener("change", async () => {
@@ -901,10 +1285,48 @@ function openPeople() {
       try {
         await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ publico: pt.checked }));
         myProfile = { ...myProfile, publico: pt.checked };
-        toast(pt.checked ? "Perfil público: agora te encontram em Pessoas." : "Perfil privado: ninguém encontra você."); openPeople();
+        toast(pt.checked ? "Perfil público: agora te encontram em Pessoas." : "Perfil privado: ninguém encontra você."); openPeople("perfil");
       } catch (x) { pt.checked = !pt.checked; toast("Não foi possível alterar agora."); }
     });
   });
+}
+function montarPessoas(root) {
+  let perfis = null;
+  const plist = root.querySelector("#plist"), pq = root.querySelector("#pq");
+  const draw = () => {
+    if (!perfis) return;
+    const q = norm(pq.value).replace(/^@/, "");
+    const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || norm(x.apelido).includes(q)));
+    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}">${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
+      : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
+  };
+  getDocs(query(collection(db, "perfis"), where("publico", "==", true), where("oculto", "==", false)))
+    .then(snap => { perfis = snap.docs.map(d => ({ uid: d.id, apelido: String((d.data() || {}).apelido || ""), foto: (d.data() || {}).foto || "" })).filter(x => x.apelido).sort((a, b) => a.apelido.localeCompare(b.apelido)); draw(); })
+    .catch(() => { plist.innerHTML = `<div class="err">Não consegui buscar agora. Verifique a internet.</div>`; });
+  pq.addEventListener("input", draw);
+  plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
+}
+async function montarRanking(root) {
+  const box = root.querySelector("#rk");
+  let r;
+  try { const d = await getDoc(doc(db, "ranking", "atual")); r = d.exists() ? d.data() : null; }
+  catch (e) { box.innerHTML = `<div class="err">Não consegui carregar o ranking agora.</div>`; return; }
+  if (!box.isConnected) return;
+  const aviso = `<p class="rknote">Ranking feito apenas com perfis públicos.</p>`;
+  if (!r) { box.innerHTML = `<p class="hint">O primeiro ranking sai no dia 1º do próximo mês.</p>${aviso}`; return; }
+  const capa = (x) => x.capa ? `<img class="rkcapa" src="${esc(x.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="rkcapa nocapa">${esc((x.titulo || "?").slice(0, 1))}</span>`;
+  const obra = (x, i, metrica) => `<div class="rkrow"><span class="rkpos">${i + 1}</span>${capa(x)}<span class="rkt"><b>${esc(x.titulo)}</b>${x.titulo2 ? `<small>${esc(x.titulo2)}</small>` : ""}</span><span class="rkm">${metrica}</span></div>`;
+  const lista = (arr, f) => (arr && arr.length) ? arr.map(f).join("") : `<p class="hint">Ainda sem dados suficientes.</p>`;
+  box.innerHTML = `
+    <div class="rkhead">🏆 Ranking de ${esc(nomeMes(r.mes))}</div>
+    <div class="sect"><div class="secth">📚 Mais lidos</div>${lista(r.maisLidos, (x, i) => obra(x, i, `${x.leitores} ${x.leitores === 1 ? "leitor" : "leitores"}`))}</div>
+    <div class="sect"><div class="secth">⭐ Mais bem avaliados</div>${lista(r.melhores, (x, i) => obra(x, i, `⭐ ${fmtNota(x.media)}<small>${x.notas} notas</small>`))}</div>
+    <div class="sect"><div class="secth">🏅 Top 10 leitores</div>${lista(r.leitores, (x, i) => `<button class="rkrow pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}"><span class="rkpos">${i + 1}</span><span class="rkav" data-av="${esc(x.uid)}">${avatarHTML("", x.apelido)}</span><span class="rkt"><b>@${esc(x.apelido)}</b></span><span class="rkm">${x.lidos} ${x.lidos === 1 ? "lido" : "lidos"}</span></button>`)}</div>
+    ${aviso}`;
+  box.querySelectorAll("[data-uid]").forEach(b => b.onclick = () => openVisit(b.dataset.uid, b.dataset.ap, ""));
+  for (const el of box.querySelectorAll("[data-av]")) {
+    getDoc(doc(db, "perfis", el.dataset.av)).then(d => { if (d.exists() && el.isConnected) el.innerHTML = avatarHTML((d.data() || {}).foto, (d.data() || {}).apelido); }).catch(() => {});
+  }
 }
 
 // ---------- estante de outra pessoa (só leitura) ----------
