@@ -55,13 +55,13 @@ async function buscaMAL(titulo) {   // segunda opção: MyAnimeList (Jikan), o m
     try {
       const r = await fetch(`https://api.jikan.moe/v4/manga?q=${encodeURIComponent(titulo)}&limit=8&sfw=true`);
       if (r.status === 429) { await sleep(4000); continue; }
-      if (!r.ok) return null;
+      if (!r.ok) { console.log(`MyAnimeList respondeu ${r.status} para "${titulo}"`); return null; }
       const j = await r.json();
       const m = (j.data || []).filter(x => !/novel/i.test(x.type || "")).find(x => [x.title, x.title_english, x.title_japanese, ...(x.title_synonyms || []), ...((x.titles || []).map(y => y.title))].some(n => parecido(n, titulo)));
       if (!m) return null;
       const img = (m.images && ((m.images.jpg && m.images.jpg.large_image_url) || (m.images.webp && m.images.webp.large_image_url))) || "";
       return { chave: "mal" + m.mal_id, titulo: (m.title || "").trim(), titulo2: (m.title_english || "").trim(), capa: img };
-    } catch (e) { await sleep(1500); }
+    } catch (e) { console.log(`MyAnimeList falhou para "${titulo}": ${e.message}`); await sleep(1500); }
   }
   return null;
 }
@@ -72,11 +72,11 @@ async function buscaAniList(titulo) {
     try {
       const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q: titulo } }) });
       if (r.status === 429) { await sleep((Number(r.headers.get("retry-after")) || 30) * 1000 + 500); continue; }
-      if (!r.ok) return null;
+      if (!r.ok) { console.log(`AniList respondeu ${r.status} para "${titulo}"`); return null; }
       const j = await r.json();
       const lista = (j.data && j.data.Page && j.data.Page.media) || [];
       const m = lista.find(x => [x.title.romaji, x.title.english, x.title.native, ...(x.synonyms || [])].some(n => parecido(n, titulo)));
-      if (!m) return null;
+      if (!m) { console.log(`AniList: nada parecido com "${titulo}" (veio: ${lista.map(x => x.title.english || x.title.romaji).join(" / ")})`); return null; }
       return { chave: m.idMal ? "mal" + m.idMal : "al" + m.id, titulo: (m.title.romaji || m.title.english || "").trim(), titulo2: (m.title.english || "").trim(), capa: (m.coverImage && m.coverImage.large) || "" };
     } catch (e) { await sleep(1500); }
   }
@@ -154,7 +154,7 @@ async function buscaAniList(titulo) {
 
   const agora = new Date(Date.now() - 3 * 3600e3); // horário de Brasília
   const mes = `${agora.getUTCFullYear()}-${String(agora.getUTCMonth() + 1).padStart(2, "0")}`;
-  const semCapa = lista.filter(x => !x.capa).map(x => x.titulo);
+  const semCapa = lista.filter(x => !x.capa).map(x => `${x.titulo} [${x.chave}]`);
   const dados = { mes, geradoEm: Date.now(), perfisContados: contados, maisLidos, melhores, leitores: topLeitores };
   await db.collection("ranking").doc("atual").set(dados);
   await db.collection("ranking").doc(mes).set(dados);
