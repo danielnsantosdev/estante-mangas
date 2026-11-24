@@ -65,7 +65,23 @@ async function buscaMAL(titulo) {   // segunda opção: MyAnimeList (Jikan), o m
   }
   return null;
 }
-async function buscaCatalogo(titulo) { return (await buscaAniList(titulo)) || (await buscaMAL(titulo)); }
+async function buscaMangaDex(titulo) {   // terceira opção: MangaDex (tem nomes em português)
+  try {
+    const r = await fetch(`https://api.mangadex.org/manga?title=${encodeURIComponent(titulo)}&limit=8&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive`, { headers: { "User-Agent": "EstanteMangas-Ranking/1.0" } });
+    if (!r.ok) { console.log(`MangaDex respondeu ${r.status} para "${titulo}"`); return null; }
+    const j = await r.json();
+    const m = (j.data || []).find(x => { const a = x.attributes || {}; return [...Object.values(a.title || {}), ...(a.altTitles || []).flatMap(t => Object.values(t))].some(n => parecido(n, titulo)); });
+    if (!m) { console.log(`MangaDex: nada parecido com "${titulo}"`); return null; }
+    const a = m.attributes || {}, links = a.links || {};
+    const nomeEn = (a.title && (a.title.en || Object.values(a.title)[0])) || "";
+    const ing = ((a.altTitles || []).find(t => t.en) || {}).en || "";
+    const cov = (m.relationships || []).find(x => x.type === "cover_art");
+    const capa = cov && cov.attributes && cov.attributes.fileName ? `https://uploads.mangadex.org/covers/${m.id}/${cov.attributes.fileName}.512.jpg` : "";
+    const chave = links.mal ? "mal" + links.mal : (links.al ? "al" + links.al : "md:" + m.id);
+    return { chave, titulo: nomeEn, titulo2: ing && norm(ing) !== norm(nomeEn) ? ing : "", capa };
+  } catch (e) { console.log(`MangaDex falhou para "${titulo}": ${e.message}`); return null; }
+}
+async function buscaCatalogo(titulo) { return (await buscaAniList(titulo)) || (await buscaMAL(titulo)) || (await buscaMangaDex(titulo)); }
 async function buscaAniList(titulo) {
   const query = `query($q:String){Page(perPage:5){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large}}}}`;
   for (let t = 0; t < 3; t++) {
@@ -74,6 +90,7 @@ async function buscaAniList(titulo) {
       if (r.status === 429) { await sleep((Number(r.headers.get("retry-after")) || 30) * 1000 + 500); continue; }
       if (!r.ok) { console.log(`AniList respondeu ${r.status} para "${titulo}"`); return null; }
       const j = await r.json();
+      if (j.errors) console.log(`AniList deu erro para "${titulo}": ${JSON.stringify(j.errors).slice(0, 200)}`);
       const lista = (j.data && j.data.Page && j.data.Page.media) || [];
       const m = lista.find(x => [x.title.romaji, x.title.english, x.title.native, ...(x.synonyms || [])].some(n => parecido(n, titulo)));
       if (!m) { console.log(`AniList: nada parecido com "${titulo}" (veio: ${lista.map(x => x.title.english || x.title.romaji).join(" / ")})`); return null; }
@@ -132,7 +149,8 @@ async function buscaAniList(titulo) {
   for (const [chave, o] of obras) {
     const digitado = [...o.titulos.entries()].sort((a, b) => b[1] - a[1])[0][0];
     let titulo = digitado, titulo2 = "", capa = "";
-    if (!chave.startsWith("nome:")) {
+    if (chave.startsWith("md:")) { if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; } }
+    else if (!chave.startsWith("nome:")) {
       const c = await db.collection("catalogo").doc(chave).get();
       if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || titulo; capa = d.capa || ""; }
       else if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; }
