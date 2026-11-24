@@ -1333,7 +1333,7 @@ function montarPessoas(root) {
     if (!perfis) return;
     const q = norm(pq.value).replace(/^@/, "");
     const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || norm(x.apelido).includes(q)));
-    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn pcard" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}" style="--vt:${CORES[x.cor] || CORES.roxo}"><span class="pcban">${safeBanner(x.banner) ? `<img src="${esc(safeBanner(x.banner))}" alt="" loading="lazy" referrerpolicy="no-referrer" style="object-position:50% ${posBanner(x.bannerPos)}%">` : ""}</span>${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
+    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn pcard" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}" style="--vt:${CORES[x.cor] || CORES.roxo}"><span class="pcban">${safeBanner(x.banner) ? midiaBanner(safeBanner(x.banner), x.bannerPos) : ""}</span>${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
       : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
   };
   getDocs(query(collection(db, "perfis"), where("publico", "==", true), where("oculto", "==", false)))
@@ -1388,6 +1388,12 @@ function safeBanner(b) {
   if (/^https:\/\/[^\s"'<>]+$/.test(b) && b.length <= 600) return b;
   return "";
 }
+const ehVideo = (u) => /\.mp4($|\?)/i.test(String(u || ""));
+function midiaBanner(u, pos, extra = "") {
+  const st = `object-position:50% ${posBanner(pos)}%`;
+  return ehVideo(u) ? `<video src="${esc(u)}" autoplay muted loop playsinline preload="auto" style="${st}" ${extra}></video>` : `<img src="${esc(u)}" alt="" referrerpolicy="no-referrer" style="${st}" ${extra}>`;
+}
+const PC_LARG = 1400;   // abaixo disso a capa fica borrada em telas grandes
 const posBanner = (v) => { const n = Number(v); return isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 50; };
 const mesAno = (ms) => { if (!ms) return ""; const d = new Date(ms); return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; };
 function haQuanto(ms) {
@@ -1411,7 +1417,7 @@ function vitrineHTML(p, its, visita) {
   const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
   return `
   <div class="vt" style="--vt:${cor}">
-    <div class="vtban">${bn ? `<img src="${esc(bn)}" alt="" referrerpolicy="no-referrer" style="object-position:50% ${posBanner(p.bannerPos)}%">` : ""}</div>
+    <div class="vtban">${bn ? midiaBanner(bn, p.bannerPos) : ""}</div>
     <div class="vtin">
       <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div></div>
       ${p.bio ? `<p class="vtbio">${esc(p.bio)}</p>` : ""}
@@ -1479,7 +1485,8 @@ async function imgMAL(q) {   // várias capas da mesma obra (volumes, edições)
 async function imgWallhaven(q, tipo) {   // só conteúdo seguro (purity=100), categoria anime
   const j = await httpJSON(`https://wallhaven.cc/api/v1/search?q=${encodeURIComponent(q)}&categories=010&purity=100&sorting=relevance${tipo === "banner" ? "&atleast=1920x600" : ""}`);
   return (j.data || []).filter(w => w.purity === "sfw").filter(w => { const r = (w.dimension_x || 1) / (w.dimension_y || 1); return tipo === "banner" ? r >= 1.4 : r <= 0.85; })
-    .filter(w => (w.dimension_x || 0) <= 4000).map(w => ({ url: w.path, thumb: w.thumbs && (w.thumbs.large || w.thumbs.small), nome: `${w.dimension_x}×${w.dimension_y}`, fonte: "Wallhaven", hd: (w.dimension_x || 0) >= 1920 })).filter(x => okUrl(x.url));
+    .filter(w => (w.dimension_x || 0) <= 4000).map(w => ({ url: w.path, thumb: w.thumbs && (w.thumbs.large || w.thumbs.small), nome: `${w.dimension_x}×${w.dimension_y}`, fonte: "Wallhaven", hd: (w.dimension_x || 0) >= 1920 }))
+    .sort((a, b) => (b.hd ? 1 : 0) - (a.hd ? 1 : 0)).filter(x => okUrl(x.url));
 }
 // junta todas as fontes, sem repetir, intercalando para misturar
 async function buscaImagens(q, tipo) {
@@ -1490,7 +1497,7 @@ async function buscaImagens(q, tipo) {
   if (!listas.length) throw new Error("falhou");
   const out = [], vistos = new Set();
   for (let i = 0; i < 40; i++) for (const l of listas) { const x = l[i]; if (x && !vistos.has(x.url)) { vistos.add(x.url); out.push(x); } }
-  return out;
+  return tipo === "banner" ? out.sort((a, b) => (b.hd ? 1 : 0) - (a.hd ? 1 : 0)) : out;
 }
 // personagens (para a foto de perfil): os dos mangás da estante + busca por nome
 async function personagensDaEstante() {
@@ -1524,7 +1531,10 @@ async function buscaGiphy(q, key) {
     const full = (im.original && im.original.url) || (im.downsized && im.downsized.url) || "";
     const thumb = (im.fixed_width_downsampled && im.fixed_width_downsampled.url) || (im.fixed_width && im.fixed_width.url) || full;
     const w = Number(im.original && im.original.width) || 0;
-    return { url: full.split("?")[0], thumb, fonte: "GIPHY", w, hd: w >= 700 };
+    // versão em vídeo da melhor qualidade que existir (muito mais nítida que o .gif)
+    const vids = [im["4k"], im.hd, im.original].map(v => v && v.mp4 ? { url: String(v.mp4).split("?")[0], w: Number(v.width) || 0 } : null).filter(v => v && /^https:\/\//.test(v.url) && v.w <= 3840);
+    const vid = vids[0] || null, vw = vid ? vid.w : w;
+    return { url: full.split("?")[0], thumb, fonte: "GIPHY", w: vw, video: vid ? vid.url : "", hd: vw >= 1000 };
   }).filter(g => /^https:\/\//.test(g.url));
 }
 async function buscaKlipy(q, key) {
@@ -1532,8 +1542,9 @@ async function buscaKlipy(q, key) {
   const j = await httpJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&page=1&customer_id=${cid}&locale=pt_BR&content_filter=medium`);
   const lista = (j.data && (j.data.data || j.data)) || [];
   return (Array.isArray(lista) ? lista : []).filter(g => g && g.file && g.type !== "ad").map(g => {
-    const hdf = g.file.hd && (g.file.hd.gif || g.file.hd.webp); const w = Number(hdf && hdf.width) || 0;
-    return { url: urlGif(g.file, ["hd", "md", "sm"]), thumb: urlGif(g.file, ["sm", "xs", "md"]), fonte: "KLIPY", w, hd: w >= 700 };
+    const hdf = g.file.hd && (g.file.hd.mp4 || g.file.hd.gif || g.file.hd.webp); const w = Number(hdf && hdf.width) || 0;
+    const mp4 = g.file.hd && g.file.hd.mp4 && g.file.hd.mp4.url;
+    return { url: urlGif(g.file, ["hd", "md", "sm"]), thumb: urlGif(g.file, ["sm", "xs", "md"]), fonte: "KLIPY", w, video: typeof mp4 === "string" && /^https:\/\//.test(mp4) ? mp4 : "", hd: w >= 1000 };
   }).filter(g => g.url);
 }
 async function buscaGifs(q) {
@@ -1588,13 +1599,13 @@ function openVitrineEdit() {
     const ban = root.querySelector("#veBan"), painel = root.querySelector("#vePainel"), rm = root.querySelector("#veRm");
     const showBan = () => {
       ban.style.setProperty("--vt", CORES[d.cor]);
-      ban.innerHTML = d.banner ? `<img src="${esc(d.banner)}" alt="" referrerpolicy="no-referrer" style="object-position:50% ${d.pos}%">` : `<span>Sem capa: fica na cor do perfil</span>`;
+      ban.innerHTML = d.banner ? midiaBanner(d.banner, d.pos) : `<span>Sem capa: fica na cor do perfil</span>`;
       rm.classList.toggle("hidden", !d.banner); root.querySelector("#vePosL").classList.toggle("hidden", !d.banner);
     };
     showBan();
     rm.onclick = () => { d.banner = ""; showBan(); };
     const posI = root.querySelector("#vePos"); posI.value = d.pos;
-    posI.addEventListener("input", () => { d.pos = posBanner(posI.value); const im = ban.querySelector("img"); if (im) im.style.objectPosition = `50% ${d.pos}%`; });
+    posI.addEventListener("input", () => { d.pos = posBanner(posI.value); const im = ban.querySelector("img,video"); if (im) im.style.objectPosition = `50% ${d.pos}%`; });
     const modos = root.querySelectorAll("[data-modo]");
     const marca = (m) => modos.forEach(b => b.classList.toggle("on", b.dataset.modo === m));
     root.querySelector('[data-modo="cat"]').onclick = () => {
@@ -1625,7 +1636,11 @@ function openVitrineEdit() {
       f.onchange = async () => {
         if (!f.files[0]) return;
         painel.innerHTML = `<p class="hint">Preparando a imagem…</p>`;
-        try { d.banner = await bannerDaGaleria(f.files[0]); showBan(); painel.innerHTML = `<p class="hint">✅ Imagem pronta. Toque em Salvar.</p>`; }
+        try {
+          const larg = await new Promise(r => { const u = URL.createObjectURL(f.files[0]); const i = new Image(); i.onload = () => { r(i.naturalWidth); URL.revokeObjectURL(u); }; i.onerror = () => r(0); i.src = u; });
+          d.banner = await bannerDaGaleria(f.files[0]); showBan();
+          painel.innerHTML = larg && larg < PC_LARG ? `<p class="hint">⚠️ Essa imagem tem ${larg} px de largura: no celular fica boa, mas no PC pode ficar borrada. Para ficar nítida em telas grandes, use uma com ${PC_LARG} px ou mais (o Wallhaven, no Catálogo, tem várias).</p>` : `<p class="hint">✅ Imagem pronta (${larg} px). Toque em Salvar.</p>`;
+        }
         catch (e) { painel.innerHTML = `<p class="err">Não consegui usar essa imagem. Tente outra.</p>`; }
       };
       f.click();
@@ -1634,6 +1649,7 @@ function openVitrineEdit() {
       marca("gif");
       const busca = temBuscaGif();
       painel.innerHTML = `${busca ? `<div class="urlrow"><input id="vgQ" placeholder="Buscar GIF (ex.: solo leveling)" autocomplete="off"><button type="button" class="btn" id="vgBusca">Buscar</button></div>
+        <label class="sohd"><input type="checkbox" id="vgHD" ${window.innerWidth >= 1100 ? "checked" : ""}> Mostrar só os de alta qualidade (ficam nítidos no PC)</label>
         <div id="vgRes" class="vgres"></div>
         <p class="vgcred">GIFs: Powered by GIPHY · KLIPY</p>
         <details class="vglink"><summary>Ou colar o link de um GIF</summary>` : ""}
@@ -1647,9 +1663,11 @@ function openVitrineEdit() {
           if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
           res.innerHTML = `<p class="hint">Buscando GIFs…</p>`;
           try {
-            const l = await buscaGifs(t);
-            res.innerHTML = l.length ? l.map(g => `<button type="button" class="vgopt" data-u="${esc(g.url)}" title="${esc(g.fonte)}"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${g.hd ? `<i class="hdtag">HD</i>` : ""}</button>`).join("")
-              : `<p class="hint">Nenhum GIF encontrado para "${esc(t)}". Tente em inglês (ex.: "solo leveling anime").</p>`;
+            const todos = await buscaGifs(t);
+            const soHD = painel.querySelector("#vgHD").checked;
+            const l = soHD ? todos.filter(g => g.w >= PC_LARG * 0.7) : todos;
+            res.innerHTML = l.length ? l.map(g => `<button type="button" class="vgopt" data-u="${esc(g.video || g.url)}" title="${esc(g.fonte)} · ${g.w || "?"} px"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${g.w >= PC_LARG * 0.7 ? `<i class="hdtag">HD</i>` : `<i class="hdtag peq">⚠️ pequena p/ PC</i>`}</button>`).join("")
+              : `<p class="hint">${todos.length && soHD ? `Nenhum GIF em alta qualidade para "${esc(t)}". Desmarque "só alta qualidade" para ver todos, ou tente outro nome.` : `Nenhum GIF encontrado para "${esc(t)}". Tente em inglês (ex.: "solo leveling anime").`}</p>`;
             res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
               const u = safeBanner(b.dataset.u); if (!u || u.startsWith("data:")) return;
               d.banner = u; showBan(); res.querySelectorAll(".vgopt").forEach(x => x.classList.toggle("on", x === b));
@@ -1657,6 +1675,7 @@ function openVitrineEdit() {
           } catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora (o limite de buscas por hora pode ter acabado). Tente daqui a pouco ou cole um link.</p>`; }
         };
         painel.querySelector("#vgBusca").onclick = buscar;
+        painel.querySelector("#vgHD").onchange = buscar;
         q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
         const sug = (d.favoritos.map(id => items.get(id)).filter(Boolean)[0] || meus[0] || {}).title || "";
         if (sug) { q.value = sug; buscar(); }
