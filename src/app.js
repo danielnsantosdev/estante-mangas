@@ -1132,7 +1132,7 @@ function openInfo(mid) {
       ${visit ? `
       <div class="sect">
         <div class="secth">Sua nota para este mangá</div>
-        ${!myProfile || !myProfile.apelido ? `<p class="hint">Para avaliar, crie seu apelido em 👤 Pessoas.</p>`
+        ${!myProfile || !myProfile.apelido ? `<p class="hint">Para avaliar, crie seu apelido em 👤 Social → Meu perfil.</p>`
           : cheio ? `<p class="hint">Este mangá já recebeu 10 notas, o limite.</p>`
           : `<div class="urlrow"><select id="myNota" class="f-sel"><option value="">Escolha…</option>${NOTAS.map(n => `<option value="${n}" ${minha && parseNota(minha.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select><button class="btn primary" id="saveNota">${minha ? "Atualizar" : "Avaliar"}</button></div>
              ${minha ? `<button class="btn ghost" id="rmNota">Remover minha nota</button>` : ""}`}
@@ -1215,11 +1215,11 @@ function apelidoOfensivo(a) {
 }
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const nomeMes = (m) => { const [a, b] = String(m || "").split("-").map(Number); return a && b ? `${MESES[b - 1]} de ${a}` : ""; };
-// 👤 vira "Comunidade": Meu perfil · Pessoas · Ranking
+// 👤 "Social": Meu perfil · Comunidade · Ranking
 function openPeople(tab = "perfil") {
   const p = myProfile || {};
   const offline = !navigator.onLine;
-  const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Pessoas"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
+  const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Comunidade"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
   let corpo = "";
   if (tab === "perfil") corpo = `
       <div class="sect">
@@ -1242,7 +1242,7 @@ function openPeople(tab = "perfil") {
       </div>`;
   else corpo = offline ? `<p class="hint">📴 Sem internet: o ranking precisa de conexão.</p>` : `<div id="rk"><div class="hint">Carregando ranking…</div></div>`;
   openModal(`
-    <div class="mhead"><h2>👥 Comunidade</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mhead"><h2>👥 Social</h2><button type="button" class="icon-btn" data-x>✕</button></div>
     <div class="mbody">${tabs}${corpo}</div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => openPeople(b.dataset.tab));
@@ -1285,7 +1285,7 @@ function openPeople(tab = "perfil") {
       try {
         await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ publico: pt.checked }));
         myProfile = { ...myProfile, publico: pt.checked };
-        toast(pt.checked ? "Perfil público: agora te encontram em Pessoas." : "Perfil privado: ninguém encontra você."); openPeople("perfil");
+        toast(pt.checked ? "Perfil público: agora te encontram na Comunidade." : "Perfil privado: ninguém encontra você."); openPeople("perfil");
       } catch (x) { pt.checked = !pt.checked; toast("Não foi possível alterar agora."); }
     });
   });
