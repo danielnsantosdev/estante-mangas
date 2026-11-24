@@ -1,0 +1,25 @@
+# Publica as regras de segurança do Firebase (firestore.rules) automaticamente quando elas mudam.
+# Também pode ser rodado manualmente: aba Actions → "Publicar regras" → Run workflow.
+name: Publicar regras
+
+on:
+  push:
+    branches: [main]
+    paths: [firestore.rules]
+  workflow_dispatch:
+
+jobs:
+  regras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Instalar o acesso ao Firebase
+        working-directory: scripts
+        run: npm init -y >/dev/null && npm install --no-audit --no-fund firebase-admin@12
+      - name: Publicar as regras
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+        run: node regras.js

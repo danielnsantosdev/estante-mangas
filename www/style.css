@@ -306,3 +306,54 @@ a.btn{color:inherit;text-decoration:none}
 .rkav .av{width:34px;height:34px}
 .rknote{font-size:12px;color:var(--muted);text-align:center;margin:4px 0 0;font-style:italic}
 @media (max-width:520px){ .title .t2{font-size:9.5px} }
+
+/* ---------- vitrine do perfil ---------- */
+.vitrine.visita{max-width:1200px;margin:12px auto 0;display:flex;flex-direction:column;gap:12px}
+.vitrine.visita .vtmais{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;align-items:start}
+.vitrine.mine{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.vt{border:var(--line);border-radius:12px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
+.vtban{height:150px;background:var(--vt,var(--c-fila));position:relative;overflow:hidden}
+.vtban img{width:100%;height:100%;object-fit:cover;display:block}
+.vtban.edit{height:110px;border:var(--line);border-radius:10px;display:grid;place-items:center}
+.vtban.edit span{color:#fff;font-weight:800;font-size:13px;text-shadow:0 1px 2px #0008}
+.vtban.edit img{position:absolute;inset:0}
+.vtin{padding:0 14px 14px}
+.vthead{display:flex;align-items:flex-end;gap:12px;margin-top:-30px;position:relative}
+.vthead .vtav{width:72px;height:72px;font-size:28px;border:3px solid var(--card);outline:2px solid var(--vt);background:var(--soft)}
+.vtname{display:flex;flex-direction:column;padding-bottom:4px;min-width:0}
+.vtname b{font-size:18px;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vtname small{font-size:12px;color:var(--muted);font-weight:700}
+.vtbio{margin:10px 0 0;font-size:14px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.vtcnt{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px;font-size:12px;color:var(--muted);font-weight:700}
+.vtcnt i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}
+.vtsec{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--vt,var(--ink));margin:14px 0 8px}
+.vtbox .vtsec{margin-top:0}
+.vtfavs{display:grid;grid-template-columns:repeat(3,minmax(0,140px));gap:10px}
+.vtfav{background:none;border:0;padding:0;text-align:left;color:inherit;display:flex;flex-direction:column;gap:5px;cursor:pointer;min-width:0}
+.vtfc{width:100%;aspect-ratio:2/3;object-fit:cover;border:var(--line);border-radius:8px;display:grid;place-items:center;background:var(--soft);font-weight:900;font-size:30px;color:var(--muted)}
+.vtfav > span:last-child{font-size:12px;font-weight:800;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vtmais{display:flex;flex-direction:column;gap:12px}
+.vtbox{border:var(--line);border-radius:12px;background:var(--card);padding:12px 14px;box-shadow:3px 3px 0 var(--ink)}
+.vtrow{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;border-top:1px solid var(--soft);padding:7px 0;text-align:left;color:inherit;cursor:pointer;font-size:13px;line-height:1.35}
+.vtsec + .vtrow{border-top:0;padding-top:0}
+.vtrow small{display:block;color:var(--muted);font-size:12px;font-weight:700}
+.vtrc{width:34px;height:48px;object-fit:cover;border:2px solid var(--ink);border-radius:5px;flex:none;display:grid;place-items:center;background:var(--soft);font-weight:900}
+.vtgen .gens{margin:0}
+.vemodo{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.vemodo .btn{padding:0 6px;font-size:13px}
+.vemodo .btn.on{background:var(--ink);color:var(--card)}
+.vbres{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:300px;overflow:auto}
+.vbopt{border:var(--line);border-radius:8px;padding:0;background:var(--card);overflow:hidden;cursor:pointer;text-align:left;color:inherit}
+.vbopt img{width:100%;height:64px;object-fit:cover;display:block}
+.vbopt small{display:block;padding:3px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vbopt.on{outline:3px solid var(--c-lendo)}
+.vecores{display:flex;flex-wrap:wrap;gap:10px}
+.vecor{width:36px;height:36px;border-radius:50%;border:var(--line);cursor:pointer}
+.vecor.on{outline:3px solid var(--ink);outline-offset:2px}
+.vefavs{display:flex;flex-direction:column;max-height:280px;overflow:auto;border:var(--line);border-radius:10px;padding:4px 10px}
+.vefav{display:flex;align-items:center;gap:10px;background:none;border:0;border-bottom:1px solid var(--soft);padding:6px 0;text-align:left;color:inherit;cursor:pointer;font-size:13px;font-weight:700}
+.vefav .vft{flex:1;min-width:0}
+.vefav b{font-size:14px;color:var(--muted);white-space:nowrap}
+.vefav.on b{color:#e0a100}
+@media (max-width:760px){ .vitrine.visita{margin:10px 10px 0} .vitrine.visita .vtmais{grid-template-columns:1fr} .vtban{height:110px} .vtfavs{grid-template-columns:repeat(3,minmax(0,1fr))} }
+.vthead .vtav.avph{color:var(--vt)}

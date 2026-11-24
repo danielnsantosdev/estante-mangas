@@ -219,7 +219,7 @@ function startSync(uid) {
   extraUnsubs.push(onSnapshot(doc(db, "perfis", uid), (d) => {
     myProfile = d.exists() ? d.data() : null; updateMeBtn();
     // perfil antigo sem o campo "oculto", ou reativado pelo administrador: volta a aparecer
-    if (myProfile && myProfile.apelido && myProfile.oculto !== false && !d.metadata.fromCache)
+    if (myProfile && myProfile.apelido && (myProfile.oculto !== false || !myProfile.membroDesde) && !(d.metadata && d.metadata.fromCache))
       setDoc(doc(db, "perfis", uid), perfilData({})).catch(() => {});
   }, () => {}));
   extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avaliacoes"), (snap) => {
@@ -578,6 +578,10 @@ function render() {
   $("#visitBar").classList.toggle("hidden", !ui.visit);
   if (ui.visit) { $("#visitName").textContent = "@" + ui.visit.apelido; $("#visitAv").innerHTML = avatarHTML(ui.visit.foto, ui.visit.apelido); }
   $("#addBtn").classList.toggle("hidden", !!ui.visit);
+  const vt = $("#vitrine"), vkey = ui.visit && !ui.visit.loading ? ui.visit.uid : "";
+  vt.classList.toggle("hidden", !vkey);
+  if (vkey && vt.dataset.uid !== vkey) { vt.dataset.uid = vkey; vt.innerHTML = vitrineHTML(ui.visit.perfil || { apelido: ui.visit.apelido }, ui.visit.items, true); ligarVitrine(vt, ui.visit.items); }
+  if (!vkey) { vt.dataset.uid = ""; vt.innerHTML = ""; }
   updateBell();
   const grid = $("#grid"), empty = $("#empty");
   if (!loaded || (ui.visit && ui.visit.loading)) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando estante…</div>`; return; }
@@ -1196,7 +1200,13 @@ async function imageToAvatar(blob) {
     return c.toDataURL("image/jpeg", 0.5);
   } finally { URL.revokeObjectURL(url); }
 }
-const perfilData = (patch) => ({ apelido: (myProfile && myProfile.apelido) || "", publico: !!(myProfile && myProfile.publico), foto: safeFoto(myProfile && myProfile.foto), oculto: false, atualizadoEm: Date.now(), ...patch });
+const perfilData = (patch) => {
+  const p = myProfile || {};
+  return { apelido: p.apelido || "", publico: !!p.publico, foto: safeFoto(p.foto), oculto: false, atualizadoEm: Date.now(),
+    bio: String(p.bio || "").slice(0, 120), cor: CORES[p.cor] ? p.cor : "", banner: safeBanner(p.banner),
+    favoritos: Array.isArray(p.favoritos) ? p.favoritos.filter(x => typeof x === "string" && x.length <= 60).slice(0, 3) : [],
+    membroDesde: Number(p.membroDesde) || membroDesdeAuth(), ...patch };
+};
 function updateMeBtn() {
   const b = $("#peopleBtn"); const f = myProfile && safeFoto(myProfile.foto);
   b.innerHTML = f ? `<img class="av" src="${esc(f)}" alt="">` : "👤";
@@ -1222,6 +1232,9 @@ function openPeople(tab = "perfil") {
   const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Comunidade"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
   let corpo = "";
   if (tab === "perfil") corpo = `
+      ${p.apelido ? `<div class="vitrine mine">${vitrineHTML(p, items, false)}</div>
+      <button type="button" class="btn primary" id="vtEdit" style="width:100%">✏️ Editar vitrine</button>
+      <p class="hint" style="margin-top:-4px">É assim que as pessoas veem o seu perfil.</p>` : ""}
       <div class="sect">
         <div class="me">
           ${avatarHTML(p.foto, p.apelido, "big")}
@@ -1249,6 +1262,9 @@ function openPeople(tab = "perfil") {
     if (tab === "pessoas" && !offline) montarPessoas(root);
     if (tab === "ranking" && !offline) montarRanking(root);
     if (tab !== "perfil") return;
+    const vtm = root.querySelector(".vitrine.mine");
+    if (vtm) ligarVitrine(vtm, items, true);
+    const ve = root.querySelector("#vtEdit"); if (ve) ve.onclick = openVitrineEdit;
     const fb = root.querySelector("#fotoBtn");
     if (fb) fb.onclick = () => { const f = $("#file"); f.value = ""; f.onchange = async () => {
       if (!f.files[0]) return;
@@ -1337,6 +1353,231 @@ async function montarRanking(root) {
   }
 }
 
+
+// ---------- vitrine do perfil ----------
+const CORES = { roxo: "#7c3aed", azul: "#2563eb", ciano: "#0891b2", verde: "#16a34a", laranja: "#ea580c", vermelho: "#dc2626", rosa: "#db2777", grafite: "#475569" };
+const CORES_NOME = { roxo: "Roxo", azul: "Azul", ciano: "Ciano", verde: "Verde", laranja: "Laranja", vermelho: "Vermelho", rosa: "Rosa", grafite: "Grafite" };
+const membroDesdeAuth = () => (currentUser && Date.parse(currentUser.metadata && currentUser.metadata.creationTime)) || Date.now();
+function safeBanner(b) {
+  b = String(b || "");
+  if (/^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(b) && b.length <= 160000) return b;
+  if (/^https:\/\/[^\s"'<>]+$/.test(b) && b.length <= 600) return b;
+  return "";
+}
+const mesAno = (ms) => { if (!ms) return ""; const d = new Date(ms); return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; };
+function haQuanto(ms) {
+  if (!ms) return "";
+  const d = (Date.now() - ms) / 86400000;
+  if (d < 1) return "hoje"; if (d < 2) return "ontem"; if (d < 30) return `há ${Math.floor(d)} dias`;
+  const m = Math.floor(d / 30.4); return m < 12 ? `há ${m} ${m === 1 ? "mês" : "meses"}` : `há ${Math.floor(m / 12)} ${m < 24 ? "ano" : "anos"}`;
+}
+function capaMini(it, cls) {
+  const cv = safeCover(it.cover);
+  return cv ? `<img class="${cls}" src="${esc(cv)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="${cls} vph">${esc((it.title || "?").slice(0, 1).toUpperCase())}</span>`;
+}
+function vitrineHTML(p, its, visita) {
+  const cor = CORES[p.cor] || CORES.roxo, bn = safeBanner(p.banner);
+  const todos = [...its.values()];
+  const cnt = { lendo: 0, fila: 0, pausado: 0, concluido: 0 }; todos.forEach(it => { cnt[stOf(it)] = (cnt[stOf(it)] || 0) + 1; });
+  const favs = (p.favoritos || []).map(id => its.get(id)).filter(Boolean).slice(0, 3);
+  const lendo = todos.filter(it => stOf(it) === "lendo").sort((a, b) => (b.lastReadAt || b.updatedAt || 0) - (a.lastReadAt || a.updatedAt || 0))[0];
+  const ativ = todos.filter(it => it.updatedAt || it.createdAt).sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)).slice(0, 3);
+  const verbo = (it) => ({ concluido: "concluiu", fila: "colocou na fila", pausado: "pausou", lendo: `leu até o cap. ${fmtCap(it.chapter)} de` })[stOf(it)] || "atualizou";
+  const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+  return `
+  <div class="vt" style="--vt:${cor}">
+    <div class="vtban">${bn ? `<img src="${esc(bn)}" alt="" referrerpolicy="no-referrer">` : ""}</div>
+    <div class="vtin">
+      <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div></div>
+      ${p.bio ? `<p class="vtbio">${esc(p.bio)}</p>` : ""}
+      <div class="vtcnt"><span><i style="background:var(--c-lendo)"></i>${cnt.lendo} lendo</span><span><i style="background:var(--c-fila)"></i>${cnt.fila} na fila</span><span><i style="background:var(--c-pausa)"></i>${plural(cnt.pausado, "pausado", "pausados")}</span><span><i style="background:var(--c-fim)"></i>${plural(cnt.concluido, "concluído", "concluídos")}</span></div>
+      ${favs.length ? `<div class="vtsec">Favoritos</div><div class="vtfavs">${favs.map(it => `<button type="button" class="vtfav" data-mid="${esc(it.id)}">${capaMini(it, "vtfc")}<span>${esc(it.title)}</span></button>`).join("")}</div>` : ""}
+    </div>
+  </div>
+  <div class="vtmais">
+    ${lendo ? `<div class="vtbox"><div class="vtsec">Lendo agora</div><button type="button" class="vtrow" data-mid="${esc(lendo.id)}">${capaMini(lendo, "vtrc")}<span><b>${esc(lendo.title)}</b><small>Capítulo ${fmtCap(lendo.chapter)}</small></span></button></div>` : ""}
+    <div class="vtbox vtgen hidden"><div class="vtsec">Gêneros favoritos</div><div class="gens"></div></div>
+    ${ativ.length ? `<div class="vtbox"><div class="vtsec">Atividade recente</div>${ativ.map(it => `<button type="button" class="vtrow" data-mid="${esc(it.id)}">${capaMini(it, "vtrc")}<span>${visita ? `@${esc(p.apelido || "")}` : "Você"} ${verbo(it)} <b>${esc(it.title)}</b><small>${haQuanto(it.updatedAt || it.createdAt)}</small></span></button>`).join("")}</div>` : ""}
+  </div>`;
+}
+// liga os cliques (abre o ⓘ do mangá) e calcula os gêneros favoritos pelo catálogo
+function ligarVitrine(box, its, fechar) {
+  box.querySelectorAll("[data-mid]").forEach(b => b.onclick = () => { const id = b.dataset.mid; if (fechar) closeModal(); openInfo(id); });
+  const gbox = box.querySelector(".vtgen"); if (!gbox) return;
+  const ids = [...new Set([...its.values()].map(it => it.catId).filter(Boolean))].slice(0, 60);
+  if (!ids.length) return;
+  Promise.all(ids.map(k => lerCatalogo(k))).then(cats => {
+    const c = {}; cats.forEach(x => ((x && x.generos) || []).forEach(g => { c[g] = (c[g] || 0) + 1; }));
+    const top = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
+    if (!top.length || !gbox.isConnected) return;
+    gbox.querySelector(".gens").innerHTML = top.map(g => `<span>${esc(g)}</span>`).join("");
+    gbox.classList.remove("hidden");
+  }).catch(() => {});
+}
+async function bannerDaGaleria(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const W = 1200, H = 400, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    const r = Math.max(W / img.naturalWidth, H / img.naturalHeight), w = W / r, h = H / r;
+    ctx.drawImage(img, (img.naturalWidth - w) / 2, (img.naturalHeight - h) / 2, w, h, 0, 0, W, H);
+    for (const [s, qs] of [[1, [0.82, 0.7, 0.6]], [0.75, [0.75, 0.6, 0.5]]]) {
+      let cv = c; if (s < 1) { cv = document.createElement("canvas"); cv.width = W * s; cv.height = H * s; cv.getContext("2d").drawImage(c, 0, 0, cv.width, cv.height); }
+      for (const q of qs) { let o = cv.toDataURL("image/webp", q); if (!o.startsWith("data:image/webp")) o = cv.toDataURL("image/jpeg", q); if (o.length <= 160000) return o; }
+    }
+    throw new Error("grande");
+  } finally { URL.revokeObjectURL(url); }
+}
+async function buscaBanners(q) {
+  const query = `query($q:String){Page(perPage:25){media(search:$q,isAdult:false,sort:SEARCH_MATCH){id bannerImage title{romaji english}}}}`;
+  const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
+  const vistos = new Set();
+  return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.bannerImage && !vistos.has(m.bannerImage) && vistos.add(m.bannerImage))
+    .map(m => ({ url: m.bannerImage, nome: (m.title.english || m.title.romaji || "").trim() }));
+}
+const testaImagem = (u) => new Promise((res) => { const i = new Image(); i.referrerPolicy = "no-referrer"; const t = setTimeout(() => res(false), 12000); i.onload = () => { clearTimeout(t); res(i.naturalWidth > 0); }; i.onerror = () => { clearTimeout(t); res(false); }; i.src = u; });
+
+function openVitrineEdit() {
+  const p = myProfile || {};
+  const d = { banner: safeBanner(p.banner), cor: CORES[p.cor] ? p.cor : "roxo", bio: String(p.bio || ""), favoritos: (p.favoritos || []).filter(id => items.has(id)).slice(0, 3) };
+  const meus = [...items.values()].sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
+  openModal(`
+    <div class="mhead"><h2>✏️ Editar vitrine</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">
+      <div class="sect">
+        <div class="secth">Capa do perfil</div>
+        <div class="vtban edit" id="veBan" style="--vt:${CORES[d.cor]}"></div>
+        <div class="vemodo">
+          <button type="button" class="btn" data-modo="cat">📚 Catálogo</button>
+          <button type="button" class="btn" data-modo="gal">🖼️ Galeria</button>
+          <button type="button" class="btn" data-modo="gif">🎞️ GIF</button>
+        </div>
+        <div id="vePainel"></div>
+        <button type="button" class="btn ghost hidden" id="veRm">Remover capa</button>
+      </div>
+      <div class="sect">
+        <div class="secth">Cor do perfil</div>
+        <div class="vecores">${Object.keys(CORES).map(k => `<button type="button" class="vecor" data-cor="${k}" title="${CORES_NOME[k]}" style="background:${CORES[k]}"></button>`).join("")}</div>
+      </div>
+      <div class="sect">
+        <div class="secth">Mini-bio <small id="veBioN"></small></div>
+        <textarea id="veBio" maxlength="120" rows="2" placeholder="Ex.: Leitor de manhwa de ação. Sempre na fila de algo novo."></textarea>
+      </div>
+      <div class="sect">
+        <div class="secth">Favoritos <small id="veFavN"></small></div>
+        <p class="hint">Escolha até 3 mangás da sua estante. Você pode trocar quando quiser.</p>
+        <div class="search" style="height:40px">🔍<input id="veFq" type="search" placeholder="Filtrar sua estante…" autocomplete="off"></div>
+        <div id="veFavs" class="vefavs"></div>
+      </div>
+    </div>
+    <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="button" class="btn primary" id="veSave">Salvar</button></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const ban = root.querySelector("#veBan"), painel = root.querySelector("#vePainel"), rm = root.querySelector("#veRm");
+    const showBan = () => {
+      ban.style.setProperty("--vt", CORES[d.cor]);
+      ban.innerHTML = d.banner ? `<img src="${esc(d.banner)}" alt="" referrerpolicy="no-referrer">` : `<span>Sem capa: fica na cor do perfil</span>`;
+      rm.classList.toggle("hidden", !d.banner);
+    };
+    showBan();
+    rm.onclick = () => { d.banner = ""; showBan(); };
+    const modos = root.querySelectorAll("[data-modo]");
+    const marca = (m) => modos.forEach(b => b.classList.toggle("on", b.dataset.modo === m));
+    root.querySelector('[data-modo="cat"]').onclick = () => {
+      marca("cat");
+      const sug = (d.favoritos.map(id => items.get(id)).filter(Boolean)[0] || meus[0] || {}).title || "";
+      painel.innerHTML = `<p class="hint">Banners prontos das obras (AniList). Busque pelo nome e toque em um.</p>
+        <div class="urlrow"><input id="vbQ" placeholder="Nome da obra (ex.: Eleceed)" value="${esc(sug)}"><button type="button" class="btn" id="vbGo">Buscar</button></div>
+        <div id="vbRes" class="vbres"></div>`;
+      const q = painel.querySelector("#vbQ"), res = painel.querySelector("#vbRes");
+      const buscar = async () => {
+        const t = q.value.trim(); if (!t) return;
+        if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
+        res.innerHTML = `<p class="hint">Buscando…</p>`;
+        try {
+          const l = await buscaBanners(t);
+          res.innerHTML = l.length ? l.map(b => `<button type="button" class="vbopt" data-u="${esc(b.url)}" title="${esc(b.nome)}"><img src="${esc(b.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"><small>${esc(b.nome)}</small></button>`).join("")
+            : `<p class="hint">Nenhum banner encontrado para "${esc(t)}". Tente o nome em inglês ou japonês, ou use Galeria/GIF.</p>`;
+          res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => { d.banner = safeBanner(b.dataset.u); showBan(); res.querySelectorAll(".vbopt").forEach(x => x.classList.toggle("on", x === b)); });
+        } catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora. Tente de novo.</p>`; }
+      };
+      painel.querySelector("#vbGo").onclick = buscar;
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
+      if (sug) buscar();
+    };
+    root.querySelector('[data-modo="gal"]').onclick = () => {
+      marca("gal"); painel.innerHTML = `<p class="hint">Escolha uma imagem do seu PC ou celular. Ela é cortada no formato de capa (largura 3× a altura).</p>`;
+      const f = $("#file"); f.value = "";
+      f.onchange = async () => {
+        if (!f.files[0]) return;
+        painel.innerHTML = `<p class="hint">Preparando a imagem…</p>`;
+        try { d.banner = await bannerDaGaleria(f.files[0]); showBan(); painel.innerHTML = `<p class="hint">✅ Imagem pronta. Toque em Salvar.</p>`; }
+        catch (e) { painel.innerHTML = `<p class="err">Não consegui usar essa imagem. Tente outra.</p>`; }
+      };
+      f.click();
+    };
+    root.querySelector('[data-modo="gif"]').onclick = () => {
+      marca("gif");
+      painel.innerHTML = `<p class="hint">Cole o link de um GIF (ou imagem) de qualquer site. No Tenor ou no Giphy: abra o GIF, clique com o botão direito (no celular, segure o dedo) e escolha <b>Copiar endereço da imagem</b>. O link precisa começar com https://</p>
+        <div class="urlrow"><input id="vgU" placeholder="https://media.tenor.com/....gif" inputmode="url"><button type="button" class="btn" id="vgGo">Usar</button></div>`;
+      const u = painel.querySelector("#vgU");
+      const usar = async () => {
+        const v = u.value.trim();
+        if (!safeBanner(v) || v.startsWith("data:")) { toast("O link precisa começar com https://", 3500); return; }
+        painel.querySelector("#vgGo").textContent = "Testando…";
+        const ok = await testaImagem(v);
+        painel.querySelector("#vgGo").textContent = "Usar";
+        if (!ok) { toast("Esse link não abriu uma imagem. Use «Copiar endereço da imagem», não o link da página.", 5000); return; }
+        d.banner = v; showBan();
+      };
+      painel.querySelector("#vgGo").onclick = usar;
+      u.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); usar(); } });
+    };
+    // cor
+    const cores = root.querySelectorAll("[data-cor]");
+    const marcaCor = () => cores.forEach(b => b.classList.toggle("on", b.dataset.cor === d.cor));
+    cores.forEach(b => b.onclick = () => { d.cor = b.dataset.cor; marcaCor(); showBan(); });
+    marcaCor();
+    // bio
+    const bio = root.querySelector("#veBio"), bioN = root.querySelector("#veBioN");
+    bio.value = d.bio; const contaBio = () => { bioN.textContent = `${bio.value.length}/120`; }; contaBio();
+    bio.addEventListener("input", contaBio);
+    // favoritos
+    const fq = root.querySelector("#veFq"), fl = root.querySelector("#veFavs"), fn = root.querySelector("#veFavN");
+    const drawFavs = () => {
+      fn.textContent = `${d.favoritos.length}/3`;
+      const q = norm(fq.value);
+      const l = meus.filter(it => !q || norm(it.title).includes(q));
+      const sel = d.favoritos.map(id => items.get(id)).filter(Boolean);
+      const resto = l.filter(it => !d.favoritos.includes(it.id));
+      fl.innerHTML = (q ? [] : sel).concat(q ? l : resto).map(it => {
+        const on = d.favoritos.includes(it.id);
+        return `<button type="button" class="vefav ${on ? "on" : ""}" data-fid="${esc(it.id)}">${capaMini(it, "vtrc")}<span class="vft">${esc(it.title)}</span><b>${on ? "★ " + (d.favoritos.indexOf(it.id) + 1) : "☆"}</b></button>`;
+      }).join("") || `<p class="hint">Nada encontrado.</p>`;
+      fl.querySelectorAll("[data-fid]").forEach(b => b.onclick = () => {
+        const id = b.dataset.fid, i = d.favoritos.indexOf(id);
+        if (i >= 0) d.favoritos.splice(i, 1);
+        else if (d.favoritos.length >= 3) { toast("Máximo de 3 favoritos. Tire um para colocar outro."); return; }
+        else d.favoritos.push(id);
+        drawFavs();
+      });
+    };
+    fq.addEventListener("input", drawFavs); drawFavs();
+    root.querySelector("#veSave").onclick = async () => {
+      const texto = bio.value.replace(/\s+/g, " ").trim().slice(0, 120);
+      if (texto && AP_RUINS_CONTEM.some(w => norm(texto).replace(/[^a-z]/g, "").includes(w))) { toast("A mini-bio tem palavras não permitidas.", 4000); return; }
+      const patch = { banner: d.banner, cor: d.cor, bio: texto, favoritos: d.favoritos.slice(0, 3) };
+      try {
+        await setDoc(doc(db, "perfis", currentUser.uid), perfilData(patch));
+        myProfile = { ...myProfile, ...patch };
+        toast("Vitrine salva!"); openPeople("perfil");
+      } catch (x) {
+        toast(x.code === "permission-denied" ? "O servidor recusou. As regras novas do Firebase ainda não foram publicadas." : (x.code === "invalid-argument" ? "A imagem da capa ficou grande demais. Tente outra." : "Não foi possível salvar agora. Verifique a internet."), 5000);
+      }
+    };
+  });
+}
+
 // ---------- estante de outra pessoa (só leitura) ----------
 async function refreshVisitAval(mid) {
   if (!ui.visit) return;
@@ -1348,8 +1589,9 @@ async function openVisit(uid, apelido, foto) {
   ui.visit = { uid, apelido, foto: foto || "", items: new Map(), avals: {}, loading: true };
   ui.filter = "todos"; window.scrollTo(0, 0); render();
   try {
-    const [ms, av] = await Promise.all([getDocs(collection(db, "users", uid, "mangas")), getDocs(collection(db, "users", uid, "avaliacoes"))]);
+    const [ms, av, pf] = await Promise.all([getDocs(collection(db, "users", uid, "mangas")), getDocs(collection(db, "users", uid, "avaliacoes")), getDoc(doc(db, "perfis", uid))]);
     if (!ui.visit || ui.visit.uid !== uid) return;
+    ui.visit.perfil = pf.exists() ? (pf.data() || {}) : { apelido };
     ms.forEach(d => ui.visit.items.set(d.id, { id: d.id, ...d.data() }));
     av.forEach(d => { ui.visit.avals[d.id] = (d.data() || {}).notas || {}; });
     ui.visit.loading = false; render();
@@ -1434,7 +1676,7 @@ $("#sort").addEventListener("change", (e) => { ui.sort = e.target.value; try { l
 $("#addBtn").addEventListener("click", () => openEditor(null));
 $("#empty").addEventListener("click", (e) => { if (e.target.id === "emptyAdd") openEditor(null); });
 $("#menuBtn").addEventListener("click", openMenu);
-$("#peopleBtn").addEventListener("click", openPeople);
+$("#peopleBtn").addEventListener("click", () => openPeople("perfil"));
 $("#bellBtn").addEventListener("click", openBell);
 $("#visitBack").addEventListener("click", closeVisit);
 window.addEventListener("beforeunload", (e) => { if (pending.size) { for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } } });
