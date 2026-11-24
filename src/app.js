@@ -1396,7 +1396,8 @@ function vitrineHTML(p, its, visita) {
       <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div></div>
       ${p.bio ? `<p class="vtbio">${esc(p.bio)}</p>` : ""}
       <div class="vtcnt"><span><i style="background:var(--c-lendo)"></i>${cnt.lendo} lendo</span><span><i style="background:var(--c-fila)"></i>${cnt.fila} na fila</span><span><i style="background:var(--c-pausa)"></i>${plural(cnt.pausado, "pausado", "pausados")}</span><span><i style="background:var(--c-fim)"></i>${plural(cnt.concluido, "concluído", "concluídos")}</span></div>
-      ${favs.length ? `<div class="vtsec">Favoritos</div><div class="vtfavs">${favs.map(it => `<button type="button" class="vtfav" data-mid="${esc(it.id)}">${capaMini(it, "vtfc")}<span>${esc(it.title)}</span></button>`).join("")}</div>` : ""}
+      <div class="vtgenin hidden"><div class="vtsec">Gêneros favoritos</div><div class="gens"></div></div>
+      ${favs.length ? `<div class="vtsec">Mangás favoritos</div><div class="vtfavs">${favs.map(it => `<button type="button" class="vtfav" data-mid="${esc(it.id)}">${capaMini(it, "vtfc")}<span>${esc(it.title)}</span></button>`).join("")}</div>` : ""}
     </div>
   </div>
   <div class="vtmais">
@@ -1415,8 +1416,9 @@ function ligarVitrine(box, its, fechar) {
     const c = {}; cats.forEach(x => ((x && x.generos) || []).forEach(g => { c[g] = (c[g] || 0) + 1; }));
     const top = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
     if (!top.length || !gbox.isConnected) return;
-    gbox.querySelector(".gens").innerHTML = top.map(g => `<span>${esc(g)}</span>`).join("");
-    gbox.classList.remove("hidden");
+    const chips = top.map(g => `<span>${esc(g)}</span>`).join("");
+    gbox.querySelector(".gens").innerHTML = chips; gbox.classList.remove("hidden");
+    const gin = box.querySelector(".vtgenin"); if (gin) { gin.querySelector(".gens").innerHTML = chips; gin.classList.remove("hidden"); }
   }).catch(() => {});
 }
 async function bannerDaGaleria(blob) {
@@ -1484,8 +1486,8 @@ function openVitrineEdit() {
   const meus = [...items.values()].sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   openModal(`
     <div class="mhead"><h2>✏️ Editar vitrine</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody">
-      <div class="sect">
+    <div class="mbody vedit">
+      <div class="sect vecapa">
         <div class="secth">Capa do perfil</div>
         <div class="vtban edit" id="veBan" style="--vt:${CORES[d.cor]}"></div>
         <div class="vemodo">
@@ -1505,7 +1507,7 @@ function openVitrineEdit() {
         <textarea id="veBio" maxlength="120" rows="2" placeholder="Ex.: Leitor de manhwa de ação. Sempre na fila de algo novo."></textarea>
       </div>
       <div class="sect">
-        <div class="secth">Favoritos <small id="veFavN"></small></div>
+        <div class="secth">Mangás favoritos <small id="veFavN"></small></div>
         <p class="hint">Escolha até 3 mangás da sua estante. Você pode trocar quando quiser.</p>
         <div class="search" style="height:40px">🔍<input id="veFq" type="search" placeholder="Filtrar sua estante…" autocomplete="off"></div>
         <div id="veFavs" class="vefavs"></div>
@@ -1642,7 +1644,7 @@ function openVitrineEdit() {
         toast(x.code === "permission-denied" ? "O servidor recusou. As regras novas do Firebase ainda não foram publicadas." : (x.code === "invalid-argument" ? "A imagem da capa ficou grande demais. Tente outra." : "Não foi possível salvar agora. Verifique a internet."), 5000);
       }
     };
-  });
+  }, { wide: true });
 }
 
 // ---------- estante de outra pessoa (só leitura) ----------

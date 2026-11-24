@@ -438,3 +438,31 @@ a.btn{color:inherit;text-decoration:none}
   .modal.wide .pcard small{font-size:14px}
   .modal.wide .pcard div{width:100%}
 }
+
+/* gêneros dentro da vitrine: só no PC (no celular continuam na caixa de baixo) */
+.vtgenin{display:none}
+@media (min-width:1100px){
+  .vitrine .vtgenin:not(.hidden){display:block}
+  .vitrine .vtgenin .gens{margin:0}
+  .vitrine .vtgenin .gens span{font-size:14px;padding:5px 14px}
+  .vitrine .vtmais .vtgen{display:none}
+
+  /* Editar vitrine no PC: janela grande, capa e busca à esquerda, cor/bio/favoritos à direita */
+  .modal.wide:has(.vedit){display:flex;flex-direction:column;overflow:hidden}
+  .modal.wide .mbody.vedit{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);grid-auto-rows:min-content;column-gap:30px;row-gap:18px;align-content:start}
+  .modal.wide .vedit .vecapa{grid-column:1;grid-row:1 / span 3}
+  .modal.wide .vedit > .sect:not(.vecapa){grid-column:2}
+  .modal.wide .vedit > .sect:last-child{grid-row:3}
+  .modal.wide .vtban.edit{height:230px}
+  .modal.wide .vemodo .btn{height:50px;font-size:16px}
+  .modal.wide .vbres{grid-template-columns:repeat(3,minmax(0,1fr));max-height:none}
+  .modal.wide .vbopt img{height:110px}
+  .modal.wide .vgres{grid-template-columns:repeat(5,minmax(0,1fr));max-height:none}
+  .modal.wide .vecor{width:44px;height:44px}
+  .modal.wide #veBio{font-size:17px;min-height:84px}
+  .modal.wide .vefavs{max-height:none;min-height:340px}
+  .modal.wide .vefav{font-size:16px;padding:8px 0}
+  .modal.wide .vefav .vtrc{width:44px;height:62px}
+  .modal.wide .mfoot{flex:none;padding:16px 28px}
+  .modal.wide .mfoot .btn{height:48px;padding:0 30px;font-size:16px}
+}
