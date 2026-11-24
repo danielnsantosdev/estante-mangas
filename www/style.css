@@ -357,3 +357,11 @@ a.btn{color:inherit;text-decoration:none}
 .vefav.on b{color:#e0a100}
 @media (max-width:760px){ .vitrine.visita{margin:10px 10px 0} .vitrine.visita .vtmais{grid-template-columns:1fr} .vtban{height:110px} .vtfavs{grid-template-columns:repeat(3,minmax(0,1fr))} }
 .vthead .vtav.avph{color:var(--vt)}
+.vgres{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-height:320px;overflow:auto}
+.vgopt{border:2px solid var(--ink);border-radius:8px;padding:0;overflow:hidden;background:var(--soft);aspect-ratio:1;cursor:pointer}
+.vgopt img{width:100%;height:100%;object-fit:cover;display:block}
+.vgopt.on{outline:3px solid var(--c-lendo);outline-offset:1px}
+.vgres .hint,.vgres .err{grid-column:1/-1}
+.vgcred{margin:0;font-size:11px;color:var(--muted);font-weight:700;text-align:right}
+.vglink summary{cursor:pointer;font-size:13px;font-weight:800;padding:4px 0}
+.vglink .hint{margin-top:6px}

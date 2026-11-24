@@ -21,9 +21,15 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - run: npm install --no-audit --no-fund
       - run: npm run build:web
-      - name: Número da versão
+      - name: Número da versão e chaves da busca de GIF
         shell: bash
-        run: echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
+        env:
+          GIPHY_KEY: ${{ secrets.GIPHY_KEY }}
+          KLIPY_KEY: ${{ secrets.KLIPY_KEY }}
+        run: |
+          echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
+          G=$(printf '%s' "$GIPHY_KEY" | tr -cd 'A-Za-z0-9_-'); K=$(printf '%s' "$KLIPY_KEY" | tr -cd 'A-Za-z0-9_-')
+          printf 'window.GIF_KEYS = { giphy: "%s", klipy: "%s" };\n' "$G" "$K" >> www/version.js
       - run: npx cap add android
       - name: Ícone do app e número da versão
         run: |
@@ -58,9 +64,15 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install --no-audit --no-fund
-      - name: Número da versão
+      - name: Número da versão e chaves da busca de GIF
         shell: bash
-        run: echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
+        env:
+          GIPHY_KEY: ${{ secrets.GIPHY_KEY }}
+          KLIPY_KEY: ${{ secrets.KLIPY_KEY }}
+        run: |
+          echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
+          G=$(printf '%s' "$GIPHY_KEY" | tr -cd 'A-Za-z0-9_-'); K=$(printf '%s' "$KLIPY_KEY" | tr -cd 'A-Za-z0-9_-')
+          printf 'window.GIF_KEYS = { giphy: "%s", klipy: "%s" };\n' "$G" "$K" >> www/version.js
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/EstanteMangas-Setup.exe }

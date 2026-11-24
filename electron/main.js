@@ -53,7 +53,7 @@ ipcMain.handle("fetch-text", async (_e, url) => {
   } finally { clearTimeout(t); }
 });
 // Consultas ao catálogo (AniList, MyAnimeList, MangaDex) e ao tradutor. Só esses endereços são permitidos.
-const API_OK = ["graphql.anilist.co", "api.jikan.moe", "api.mangadex.org", "api.mymemory.translated.net"];
+const API_OK = ["graphql.anilist.co", "api.jikan.moe", "api.mangadex.org", "api.mymemory.translated.net", "api.giphy.com", "api.klipy.com"];
 ipcMain.handle("http", async (_e, req) => {
   const { url, method = "GET", headers = {}, body } = req || {};
   let host = ""; try { host = new URL(url).hostname; } catch (e) {}

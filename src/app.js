@@ -1436,6 +1436,41 @@ async function buscaBanners(q) {
   return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.bannerImage && !vistos.has(m.bannerImage) && vistos.add(m.bannerImage))
     .map(m => ({ url: m.bannerImage, nome: (m.title.english || m.title.romaji || "").trim() }));
 }
+// ---------- busca de GIFs: GIPHY + KLIPY juntos (chaves vêm do GitHub, em version.js) ----------
+const gifKeys = () => { const k = window.GIF_KEYS || {}; return { giphy: String(k.giphy || ""), klipy: String(k.klipy || "") }; };
+const temBuscaGif = () => { const k = gifKeys(); return !!(k.giphy || k.klipy); };
+function urlGif(o, tamanhos) {
+  for (const t of tamanhos) { const f = o && o[t]; if (!f) continue; for (const fm of ["gif", "webp"]) { const u = f[fm] && (f[fm].url || f[fm]); if (typeof u === "string" && /^https:\/\//.test(u)) return u; } }
+  return "";
+}
+async function buscaGiphy(q, key) {
+  const j = await httpJSON(`https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13&lang=pt`);
+  return (j.data || []).map(g => {
+    const im = g.images || {};
+    const full = (im.original && im.original.url) || (im.downsized && im.downsized.url) || "";
+    const thumb = (im.fixed_width_downsampled && im.fixed_width_downsampled.url) || (im.fixed_width && im.fixed_width.url) || full;
+    return { url: full.split("?")[0], thumb, fonte: "GIPHY", w: Number(im.original && im.original.width) || 0, h: Number(im.original && im.original.height) || 0 };
+  }).filter(g => /^https:\/\//.test(g.url));
+}
+async function buscaKlipy(q, key) {
+  const cid = encodeURIComponent((currentUser && currentUser.uid) || "anon");
+  const j = await httpJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&page=1&customer_id=${cid}&locale=pt_BR&content_filter=medium`);
+  const lista = (j.data && (j.data.data || j.data)) || [];
+  return (Array.isArray(lista) ? lista : []).filter(g => g && g.file && g.type !== "ad").map(g => ({
+    url: urlGif(g.file, ["hd", "md", "sm"]), thumb: urlGif(g.file, ["sm", "xs", "md"]), fonte: "KLIPY",
+  })).filter(g => g.url);
+}
+async function buscaGifs(q) {
+  const k = gifKeys(), tarefas = [];
+  if (k.giphy) tarefas.push(buscaGiphy(q, k.giphy));
+  if (k.klipy) tarefas.push(buscaKlipy(q, k.klipy));
+  const res = await Promise.allSettled(tarefas);
+  const listas = res.filter(r => r.status === "fulfilled").map(r => r.value);
+  if (!listas.length) throw new Error("falhou");
+  const out = [], vistos = new Set();
+  for (let i = 0; i < 30; i++) for (const l of listas) { const g = l[i]; if (g && !vistos.has(g.url)) { vistos.add(g.url); out.push(g); } }   // intercala as fontes
+  return out;
+}
 const testaImagem = (u) => new Promise((res) => { const i = new Image(); i.referrerPolicy = "no-referrer"; const t = setTimeout(() => res(false), 12000); i.onload = () => { clearTimeout(t); res(i.naturalWidth > 0); }; i.onerror = () => { clearTimeout(t); res(false); }; i.src = u; });
 
 function openVitrineEdit() {
@@ -1518,8 +1553,35 @@ function openVitrineEdit() {
     };
     root.querySelector('[data-modo="gif"]').onclick = () => {
       marca("gif");
-      painel.innerHTML = `<p class="hint">Cole o link de um GIF (ou imagem) de qualquer site. No Tenor ou no Giphy: abra o GIF, clique com o botão direito (no celular, segure o dedo) e escolha <b>Copiar endereço da imagem</b>. O link precisa começar com https://</p>
-        <div class="urlrow"><input id="vgU" placeholder="https://media.tenor.com/....gif" inputmode="url"><button type="button" class="btn" id="vgGo">Usar</button></div>`;
+      const busca = temBuscaGif();
+      painel.innerHTML = `${busca ? `<div class="urlrow"><input id="vgQ" placeholder="Buscar GIF (ex.: solo leveling)" autocomplete="off"><button type="button" class="btn" id="vgBusca">Buscar</button></div>
+        <div id="vgRes" class="vgres"></div>
+        <p class="vgcred">GIFs: Powered by GIPHY · KLIPY</p>
+        <details class="vglink"><summary>Ou colar o link de um GIF</summary>` : ""}
+        <p class="hint">Cole o link de um GIF (ou imagem) de qualquer site. No Giphy: abra o GIF, clique com o botão direito (no celular, segure o dedo) e escolha <b>Copiar endereço da imagem</b>. O link precisa começar com https://</p>
+        <div class="urlrow"><input id="vgU" placeholder="https://media.giphy.com/....gif" inputmode="url"><button type="button" class="btn" id="vgGo">Usar</button></div>
+        ${busca ? `</details>` : ""}`;
+      if (busca) {
+        const q = painel.querySelector("#vgQ"), res = painel.querySelector("#vgRes");
+        const buscar = async () => {
+          const t = q.value.trim(); if (!t) { q.focus(); return; }
+          if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
+          res.innerHTML = `<p class="hint">Buscando GIFs…</p>`;
+          try {
+            const l = await buscaGifs(t);
+            res.innerHTML = l.length ? l.map(g => `<button type="button" class="vgopt" data-u="${esc(g.url)}" title="${esc(g.fonte)}"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join("")
+              : `<p class="hint">Nenhum GIF encontrado para "${esc(t)}". Tente em inglês (ex.: "solo leveling anime").</p>`;
+            res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
+              const u = safeBanner(b.dataset.u); if (!u || u.startsWith("data:")) return;
+              d.banner = u; showBan(); res.querySelectorAll(".vgopt").forEach(x => x.classList.toggle("on", x === b));
+            });
+          } catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora (o limite de buscas por hora pode ter acabado). Tente daqui a pouco ou cole um link.</p>`; }
+        };
+        painel.querySelector("#vgBusca").onclick = buscar;
+        q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
+        const sug = (d.favoritos.map(id => items.get(id)).filter(Boolean)[0] || meus[0] || {}).title || "";
+        if (sug) { q.value = sug; buscar(); }
+      }
       const u = painel.querySelector("#vgU");
       const usar = async () => {
         const v = u.value.trim();
