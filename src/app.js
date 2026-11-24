@@ -599,12 +599,13 @@ function render() {
 
 // ---------- modais ----------
 let modalCleanup = null;
-function openModal(html, onMount) {
+function openModal(html, onMount, opts = {}) {
+  $("#modal").classList.toggle("wide", !!opts.wide);
   $("#modal").innerHTML = html; $("#bd").classList.add("open");
   modalCleanup = onMount ? onMount($("#modal")) : null;
 }
 function closeModal() {
-  $("#bd").classList.remove("open"); $("#modal").innerHTML = "";
+  $("#bd").classList.remove("open"); $("#modal").innerHTML = ""; $("#modal").classList.remove("wide");
   if (typeof modalCleanup === "function") modalCleanup(); modalCleanup = null;
 }
 $("#bd").addEventListener("click", (e) => { if (e.target.id === "bd") closeModal(); });
@@ -1304,7 +1305,7 @@ function openPeople(tab = "perfil") {
         toast(pt.checked ? "Perfil público: agora te encontram na Comunidade." : "Perfil privado: ninguém encontra você."); openPeople("perfil");
       } catch (x) { pt.checked = !pt.checked; toast("Não foi possível alterar agora."); }
     });
-  });
+  }, { wide: true });
 }
 function montarPessoas(root) {
   let perfis = null;
@@ -1313,11 +1314,15 @@ function montarPessoas(root) {
     if (!perfis) return;
     const q = norm(pq.value).replace(/^@/, "");
     const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || norm(x.apelido).includes(q)));
-    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}">${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
+    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn pcard" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}" style="--vt:${CORES[x.cor] || CORES.roxo}"><span class="pcban">${safeBanner(x.banner) ? `<img src="${esc(safeBanner(x.banner))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span>${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
       : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
   };
   getDocs(query(collection(db, "perfis"), where("publico", "==", true), where("oculto", "==", false)))
-    .then(snap => { perfis = snap.docs.map(d => ({ uid: d.id, apelido: String((d.data() || {}).apelido || ""), foto: (d.data() || {}).foto || "" })).filter(x => x.apelido).sort((a, b) => a.apelido.localeCompare(b.apelido)); draw(); })
+    .then(snap => {
+      perfis = snap.docs.map(d => { const v = d.data() || {}; return { uid: d.id, apelido: String(v.apelido || ""), foto: v.foto || "", banner: v.banner || "", cor: v.cor || "" }; }).filter(x => x.apelido);
+      for (let i = perfis.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perfis[i], perfis[j]] = [perfis[j], perfis[i]]; }   // ordem diferente a cada vez
+      draw();
+    })
     .catch(() => { plist.innerHTML = `<div class="err">Não consegui buscar agora. Verifique a internet.</div>`; });
   pq.addEventListener("input", draw);
   plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
@@ -1739,6 +1744,17 @@ $("#addBtn").addEventListener("click", () => openEditor(null));
 $("#empty").addEventListener("click", (e) => { if (e.target.id === "emptyAdd") openEditor(null); });
 $("#menuBtn").addEventListener("click", openMenu);
 $("#peopleBtn").addEventListener("click", () => openPeople("perfil"));
+// No PC (tela larga), a busca e a ordenação sobem para a barra do logo; no celular ficam embaixo
+(function posicionaBusca() {
+  const mq = window.matchMedia("(min-width: 1100px)");
+  const row = document.querySelector(".tools .row") || document.querySelector(".bar .row");
+  const ajusta = () => {
+    if (!row) return;
+    if (mq.matches) { const sp = document.querySelector(".bar .spacer"); if (row.parentElement !== sp.parentElement) sp.replaceWith(row); row.classList.add("toprow"); }
+    else if (row.classList.contains("toprow")) { const sp = document.createElement("div"); sp.className = "spacer"; row.replaceWith(sp); document.querySelector(".tools").prepend(row); row.classList.remove("toprow"); }
+  };
+  ajusta(); (mq.addEventListener ? mq.addEventListener("change", ajusta) : mq.addListener(ajusta));
+})();
 $("#bellBtn").addEventListener("click", openBell);
 $("#visitBack").addEventListener("click", closeVisit);
 window.addEventListener("beforeunload", (e) => { if (pending.size) { for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } } });

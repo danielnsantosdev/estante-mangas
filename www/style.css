@@ -365,3 +365,76 @@ a.btn{color:inherit;text-decoration:none}
 .vgcred{margin:0;font-size:11px;color:var(--muted);font-weight:700;text-align:right}
 .vglink summary{cursor:pointer;font-size:13px;font-weight:800;padding:4px 0}
 .vglink .hint{margin-top:6px}
+
+/* ---------- Comunidade: cartões (no celular parecem a lista de antes) ---------- */
+.pcard{position:relative}
+.pcban{display:none}
+
+/* ---------- PC (tela larga): estante ocupa a tela, só com bordas laterais livres ---------- */
+@media (min-width:1100px){
+  :root{ --larg: min(calc(100vw - 2 * clamp(40px, 9vw, 240px)), 2200px); }
+  .bar,.tools,main,.banner,.visitbar,.vitrine.visita{max-width:var(--larg)}
+  main{padding:22px 0 120px}
+  .grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:26px}
+  .bar{gap:16px;padding:14px 0}
+  .tools{padding:0 0 12px}
+  .bar .toprow{flex:0 1 640px;margin-left:auto;margin-right:8px}
+  .bar .toprow .search{height:44px}
+  .bar .toprow select.sort{height:44px;max-width:210px}
+  .icon-btn{width:46px;height:46px;font-size:18px}
+  .logo{font-size:36px}
+
+  /* janela grande do Social */
+  .modal.wide{max-width:min(1300px, 92vw);height:min(92vh, 1000px);max-height:none}
+  .modal.wide .mhead h2{font-size:28px}
+  .modal.wide .mbody{padding:22px 28px;gap:18px}
+  .modal.wide .mbody > *, .modal.wide .sect > *{flex-shrink:0}
+  .modal.wide .ctabs .chip{font-size:16px;padding:10px 0}
+
+  /* vitrine: capa larga em cima, duas colunas embaixo (Meu perfil e perfil de outra pessoa) */
+  .vitrine.mine,.vitrine.visita{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ban ban" "in mais";gap:0;border:var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow);overflow:hidden;margin-bottom:4px}
+  .vitrine.visita{margin:18px auto 0}
+  .vitrine .vt{display:contents}
+  .vitrine .vtban{grid-area:ban;height:250px;border-bottom:var(--line)}
+  .vitrine .vtin{grid-area:in;padding:0 28px 26px}
+  .vitrine .vthead{margin-top:-64px;gap:18px}
+  .vitrine .vthead .vtav{width:130px;height:130px;font-size:48px;border-width:5px;outline-width:3px}
+  .vitrine .vtname b{font-size:32px}
+  .vitrine .vtname small{font-size:16px}
+  .vitrine .vtbio{font-size:18px;margin-top:14px}
+  .vitrine .vtcnt{font-size:15px;gap:8px 18px}
+  .vitrine .vtcnt i{width:10px;height:10px}
+  .vitrine .vtsec{font-size:14px}
+  .vitrine .vtfavs{grid-template-columns:repeat(3,minmax(0,190px));gap:20px}
+  .vitrine .vtfav > span:last-child{font-size:14px}
+  .vitrine .vtfc{font-size:44px}
+  .vitrine .vtmais,.vitrine.visita .vtmais{grid-area:mais;display:flex;flex-direction:column;align-items:stretch;gap:16px;padding:22px 26px 26px 0}
+  .vitrine .vtbox{padding:16px 18px}
+  .vitrine .vtrow{font-size:15px}
+  .vitrine .vtrc{width:46px;height:64px}
+
+  /* ranking em três colunas */
+  #rk{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:start}
+  #rk .rkhead,#rk .rknote,#rk > .hint,#rk > .err{grid-column:1 / -1}
+  #rk .rkhead{font-size:32px}
+  #rk .sect{border:var(--line);border-radius:14px;padding:16px 18px;background:var(--card);box-shadow:3px 3px 0 var(--ink)}
+  #rk .secth{font-size:15px}
+  #rk .rkrow{padding:8px 12px;gap:14px;border-width:0 0 1px;border-radius:0;background:none}
+  #rk .rkpos{font-size:28px;width:30px}
+  #rk .rkcapa{width:56px;height:80px}
+  #rk .rkav .av{width:56px;height:56px}
+  #rk .rkt b{font-size:17px;white-space:normal}
+  #rk .rkt small{font-size:13px}
+  #rk .rkm{font-size:15px}
+
+  /* comunidade: pessoas em grade, 4 por linha */
+  .modal.wide #plist{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+  .modal.wide .search{height:52px!important;flex:none;font-size:17px}
+  .modal.wide .pcard{flex-direction:column;align-items:flex-start;padding:0 16px 16px;overflow:hidden;height:auto;border-radius:14px;background:var(--card);box-shadow:3px 3px 0 var(--ink);gap:6px}
+  .modal.wide .pcban{display:block;height:90px;margin:0 -16px;width:calc(100% + 32px);background:var(--vt);border-bottom:var(--line);overflow:hidden}
+  .modal.wide .pcban img{width:100%;height:100%;object-fit:cover;display:block;border:0;border-radius:0}
+  .modal.wide .pcard .av{width:76px;height:76px;margin-top:-40px;border:4px solid var(--card);outline:2px solid var(--vt);font-size:30px;background:var(--soft)}
+  .modal.wide .pcard b{font-size:19px}
+  .modal.wide .pcard small{font-size:14px}
+  .modal.wide .pcard div{width:100%}
+}
