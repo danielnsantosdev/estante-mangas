@@ -34,9 +34,30 @@ const db = admin.firestore();
 const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10;
 
+// Busca a obra no mesmo catálogo do app (AniList) quando o mangá não foi vinculado,
+// para o ranking ter sempre o nome popular e a capa oficial.
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const parecido = (a, b) => { a = norm(a).replace(/[^a-z0-9]/g, ""); b = norm(b).replace(/[^a-z0-9]/g, ""); return !!a && !!b && (a === b || (a.length >= 5 && b.includes(a)) || (b.length >= 5 && a.includes(b))); };
+async function buscaAniList(titulo) {
+  const query = `query($q:String){Page(perPage:5){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large}}}}`;
+  for (let t = 0; t < 3; t++) {
+    try {
+      const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q: titulo } }) });
+      if (r.status === 429) { await sleep(5000); continue; }
+      if (!r.ok) return null;
+      const j = await r.json();
+      const lista = (j.data && j.data.Page && j.data.Page.media) || [];
+      const m = lista.find(x => [x.title.romaji, x.title.english, x.title.native, ...(x.synonyms || [])].some(n => parecido(n, titulo)));
+      if (!m) return null;
+      return { chave: m.idMal ? "mal" + m.idMal : "al" + m.id, titulo: (m.title.romaji || m.title.english || "").trim(), titulo2: (m.title.english || "").trim(), capa: (m.coverImage && m.coverImage.large) || "" };
+    } catch (e) { await sleep(1500); }
+  }
+  return null;
+}
+
 (async () => {
   const perfis = await db.collection("perfis").where("publico", "==", true).get();
-  const obras = new Map();       // chave -> { titulos: Map(nome -> contagem), titulo2, capa, leitores: Set, notas: [] }
+  const entradas = [];   // um item por mangá de cada leitor
   const leitores = [];
   let contados = 0;
 
@@ -49,32 +70,52 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
     for (const m of ms.docs) {
       const x = m.data() || {};
       const st = x.status === "acumulando" ? "pausado" : x.status;
-      const chave = /^(al|mal)\d+$/.test(x.catId || "") ? x.catId : "nome:" + norm(x.title);
-      if (!obras.has(chave)) obras.set(chave, { titulos: new Map(), titulo2: "", capa: "", leitores: new Set(), notas: [] });
-      const o = obras.get(chave);
-      o.titulos.set(x.title, (o.titulos.get(x.title) || 0) + 1);
-      if (!o.titulo2 && x.titulo2) o.titulo2 = x.titulo2;
       const cv = String(x.cover || "");
-      if (!o.capa && (/^https?:\/\//.test(cv) || (/^data:image\//.test(cv) && cv.length < 120000))) o.capa = cv;   // link ou foto enviada
-      if (st === "lendo" || st === "concluido") o.leitores.add(p.id);           // "mais lidos" = Lendo + Concluído
-      if (typeof x.nota === "number") o.notas.push(x.nota);
+      entradas.push({ uid: p.id, title: String(x.title || "").trim(), catId: /^(al|mal)\d+$/.test(x.catId || "") ? x.catId : "", st,
+        nota: typeof x.nota === "number" ? x.nota : null,
+        capa: /^https?:\/\//.test(cv) || (/^data:image\//.test(cv) && cv.length < 120000) ? cv : "" });
       if (st === "concluido") lidos++;
     }
     if (lidos > 0) leitores.push({ uid: p.id, apelido: pf.apelido, lidos });
   }
 
-  // nomes e capas do catálogo (em português) têm prioridade
+  // 1) mangás sem vínculo: procura no catálogo pelo nome (uma vez por nome)
+  const porNome = new Map();
+  for (const e of entradas) if (!e.catId && e.title && !porNome.has(norm(e.title))) porNome.set(norm(e.title), e.title);
+  const achados = new Map();
+  for (const [k, titulo] of porNome) { achados.set(k, await buscaAniList(titulo)); await sleep(800); }
+  for (const e of entradas) if (!e.catId) { const a = achados.get(norm(e.title)); if (a) { e.catId = a.chave; e.aniList = a; } }
+
+  // 2) agrupa por obra
+  const obras = new Map();
+  for (const e of entradas) {
+    const chave = e.catId || "nome:" + norm(e.title);
+    if (!obras.has(chave)) obras.set(chave, { titulos: new Map(), capa: "", aniList: null, leitores: new Set(), notas: [] });
+    const o = obras.get(chave);
+    o.titulos.set(e.title, (o.titulos.get(e.title) || 0) + 1);
+    if (!o.capa && e.capa) o.capa = e.capa;
+    if (!o.aniList && e.aniList) o.aniList = e.aniList;
+    if (e.st === "lendo" || e.st === "concluido") o.leitores.add(e.uid);           // "mais lidos" = Lendo + Concluído
+    if (e.nota !== null) o.notas.push(e.nota);
+  }
+
+  // 3) nome e capa: catálogo do app primeiro, depois AniList, por último o que o leitor colocou
   const lista = [];
   for (const [chave, o] of obras) {
-    // em destaque: o nome mais popular (do catálogo); embaixo: o nome que os leitores digitaram
     const digitado = [...o.titulos.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    let titulo = digitado, titulo2 = "", capa = o.capa;
+    let titulo = digitado, titulo2 = "", capa = "";
     if (!chave.startsWith("nome:")) {
       const c = await db.collection("catalogo").doc(chave).get();
-      if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || digitado; capa = d.capa || capa; }
+      if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || titulo; capa = d.capa || ""; }
+      else if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; }
+      else {
+        const a = await buscaAniList(digitado); await sleep(800);
+        if (a && a.chave === chave) { titulo = a.titulo2 || a.titulo || titulo; capa = a.capa; }
+      }
     }
+    if (!capa) capa = o.capa;
     if (norm(digitado) !== norm(titulo)) titulo2 = digitado;
-    lista.push({ chave, titulo, titulo2: titulo2 || "", capa: capa || "", leitores: o.leitores.size, notas: o.notas.length, media: o.notas.length ? media(o.notas) : 0 });
+    lista.push({ chave, titulo, titulo2, capa: capa || "", leitores: o.leitores.size, notas: o.notas.length, media: o.notas.length ? media(o.notas) : 0 });
   }
 
   const maisLidos = lista.filter(x => x.leitores > 0).sort((a, b) => b.leitores - a.leitores || a.titulo.localeCompare(b.titulo)).slice(0, 10)
@@ -85,9 +126,11 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
 
   const agora = new Date(Date.now() - 3 * 3600e3); // horário de Brasília
   const mes = `${agora.getUTCFullYear()}-${String(agora.getUTCMonth() + 1).padStart(2, "0")}`;
+  const semCapa = lista.filter(x => !x.capa).map(x => x.titulo);
   const dados = { mes, geradoEm: Date.now(), perfisContados: contados, maisLidos, melhores, leitores: topLeitores };
   await db.collection("ranking").doc("atual").set(dados);
   await db.collection("ranking").doc(mes).set(dados);
-  console.log(`Ranking de ${mes} gerado com ${contados} perfis públicos.`);
+  console.log(`Ranking de ${mes} gerado com ${contados} perfis públicos e ${lista.length} obras.`);
+  if (semCapa.length) console.log("Obras sem capa (não achadas no catálogo): " + semCapa.join(" | "));
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });
