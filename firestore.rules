@@ -92,8 +92,9 @@ service cloud.firestore {
       allow get: if dono(uid) || (acesso() && resource.data.publico == true && resource.data.get('oculto', false) == false);
       allow list: if acesso() && resource.data.publico == true && resource.data.oculto == false;
       allow create, update: if dono(uid) && acesso()
-        && request.resource.data.keys().hasOnly(['apelido', 'publico', 'foto', 'oculto', 'atualizadoEm', 'bio', 'cor', 'banner', 'favoritos', 'membroDesde'])
-        && texto(request.resource.data, 'bio', 120) && texto(request.resource.data, 'cor', 12) && texto(request.resource.data, 'banner', 160000)
+        && request.resource.data.keys().hasOnly(['apelido', 'publico', 'foto', 'oculto', 'atualizadoEm', 'bio', 'cor', 'banner', 'bannerPos', 'favoritos', 'membroDesde'])
+        && texto(request.resource.data, 'bio', 120) && texto(request.resource.data, 'cor', 12) && texto(request.resource.data, 'banner', 460000)
+        && (!('bannerPos' in request.resource.data) || (request.resource.data.bannerPos is number && request.resource.data.bannerPos >= 0 && request.resource.data.bannerPos <= 100))
         && (!('favoritos' in request.resource.data) || (request.resource.data.favoritos is list && request.resource.data.favoritos.size() <= 3))
         && (!('membroDesde' in request.resource.data) || request.resource.data.membroDesde is number)
         && request.resource.data.apelido is string

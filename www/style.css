@@ -395,7 +395,7 @@ a.btn{color:inherit;text-decoration:none}
   .vitrine.mine,.vitrine.visita{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ban ban" "in mais";gap:0;border:var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow);overflow:hidden;margin-bottom:4px}
   .vitrine.visita{margin:18px auto 0}
   .vitrine .vt{display:contents}
-  .vitrine .vtban{grid-area:ban;height:250px;border-bottom:var(--line)}
+  .vitrine .vtban{grid-area:ban;height:auto;aspect-ratio:4 / 1;border-bottom:var(--line)}
   .vitrine .vtin{grid-area:in;padding:0 28px 26px}
   .vitrine .vthead{margin-top:-64px;gap:18px}
   .vitrine .vthead .vtav{width:130px;height:130px;font-size:48px;border-width:5px;outline-width:3px}
@@ -453,7 +453,7 @@ a.btn{color:inherit;text-decoration:none}
   .modal.wide .vedit .vecapa{grid-column:1;grid-row:1 / span 3}
   .modal.wide .vedit > .sect:not(.vecapa){grid-column:2}
   .modal.wide .vedit > .sect:last-child{grid-row:3}
-  .modal.wide .vtban.edit{height:230px}
+  .modal.wide .vtban.edit{height:auto;aspect-ratio:4 / 1}
   .modal.wide .vemodo .btn{height:50px;font-size:16px}
   .modal.wide .vbres{grid-template-columns:repeat(3,minmax(0,1fr));max-height:none}
   .modal.wide .vbopt img{height:110px}
@@ -465,4 +465,34 @@ a.btn{color:inherit;text-decoration:none}
   .modal.wide .vefav .vtrc{width:44px;height:62px}
   .modal.wide .mfoot{flex:none;padding:16px 28px}
   .modal.wide .mfoot .btn{height:48px;padding:0 30px;font-size:16px}
+}
+
+/* ---------- fotos, acervo de imagens, enquadramento ---------- */
+.hdtag{position:absolute;top:4px;left:4px;background:var(--ink);color:var(--card);font-style:normal;font-size:10px;font-weight:900;padding:1px 5px;border-radius:4px}
+.vgopt,.vbopt{position:relative}
+.vepos{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:800}
+.vepos small{font-weight:600;color:var(--muted)}
+.vepos input{width:100%}
+.av.huge{width:150px;height:150px;font-size:56px;border-width:3px}
+.fotoprev{display:grid;place-items:center;padding:6px 0}
+.fpres{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-height:360px;overflow:auto}
+.fpres .hint,.fpres .err{grid-column:1/-1}
+.fpopt{position:relative;border:2px solid var(--ink);border-radius:10px;padding:0;overflow:hidden;background:var(--soft);cursor:pointer;display:flex;flex-direction:column;color:inherit;text-align:left}
+.fpopt img{width:100%;aspect-ratio:1;object-fit:cover;object-position:50% 20%;display:block}
+.fpopt small{font-size:11px;font-weight:700;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fpopt.on{outline:3px solid var(--c-lendo);outline-offset:1px}
+.ibres{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-height:380px;overflow:auto}
+.ibres .hint,.ibres .err{grid-column:1/-1}
+.ibopt{position:relative;border:2px solid var(--ink);border-radius:8px;padding:0;overflow:hidden;background:var(--soft);cursor:pointer;color:inherit}
+.ibopt img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block}
+.ibopt small{position:absolute;bottom:0;left:0;right:0;background:color-mix(in srgb,var(--ink) 70%,transparent);color:var(--card);font-size:10px;font-weight:800;padding:2px 4px}
+.ibopt.on{outline:3px solid var(--c-lendo);outline-offset:1px}
+#cprev img{object-fit:cover}
+@media (max-width:520px){ .ibres{grid-template-columns:repeat(3,minmax(0,1fr))} .av.huge{width:120px;height:120px} }
+@media (min-width:1100px){
+  .modal.wide .vfoto .vecapa{grid-row:auto}
+  .modal.wide .vfoto{grid-template-columns:minmax(0,0.8fr) minmax(0,1.6fr)}
+  .modal.wide .vfoto > .sect:last-child{grid-column:2;grid-row:1}
+  .modal.wide .fpres{grid-template-columns:repeat(5,minmax(0,1fr));max-height:none}
+  .modal.wide .av.huge{width:220px;height:220px;font-size:80px}
 }

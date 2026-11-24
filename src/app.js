@@ -671,6 +671,7 @@ function openEditor(id) {
             <div class="cprev" id="cprev"></div>
             <div class="cbtns">
               <button type="button" class="btn" id="pick">🖼️ Foto da galeria / arquivo</button>
+              <button type="button" class="btn" id="imgBusca">🔎 Buscar imagem (catálogo e internet)</button>
               <div class="urlrow">
                 <input id="imgUrl" inputmode="url" placeholder="ou cole o link da imagem">
                 <button type="button" class="btn" id="useUrl">OK</button>
@@ -679,6 +680,7 @@ function openEditor(id) {
               <button type="button" class="btn ghost" id="rmCover">Remover capa</button>
             </div>
           </div>
+          <div id="imgPainel"></div>
         </div>
       </div>
       <div class="mfoot">
@@ -725,6 +727,27 @@ function openEditor(id) {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelector("#pick").onclick = () => { const f = $("#file"); f.value = ""; f.onchange = () => f.files[0] && useBlob(f.files[0]); f.click(); };
     root.querySelector("#useUrl").onclick = useUrl;
+    root.querySelector("#imgBusca").onclick = () => {
+      const pn = root.querySelector("#imgPainel");
+      pn.innerHTML = `<div class="sect" style="margin-top:10px"><p class="hint">Capas e imagens de AniList, MyAnimeList, Kitsu e Wallhaven. Toque em uma para usar.</p>
+        <div class="urlrow"><input id="ibQ" placeholder="Nome da obra" value="${esc(titleInput.value)}"><button type="button" class="btn" id="ibGo">Buscar</button></div>
+        <div id="ibRes" class="ibres"></div></div>`;
+      const q = pn.querySelector("#ibQ"), res = pn.querySelector("#ibRes");
+      const go = async () => {
+        const t = q.value.trim(); if (!t) { q.focus(); return; }
+        if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
+        res.innerHTML = `<p class="hint">Buscando…</p>`;
+        try {
+          const l = await buscaImagens(t, "capa");
+          res.innerHTML = l.length ? l.map(x => `<button type="button" class="ibopt" data-u="${esc(x.url)}" title="${esc(x.fonte)} · ${esc(x.nome)}"><img src="${esc(x.thumb || x.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"><small>${esc(x.fonte)}</small></button>`).join("")
+            : `<p class="hint">Nada encontrado. Tente o nome em inglês ou japonês.</p>`;
+          res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => { cover = safeCover(b.dataset.u); paintCover(); res.querySelectorAll("[data-u]").forEach(x => x.classList.toggle("on", x === b)); });
+        } catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora. Tente de novo.</p>`; }
+      };
+      pn.querySelector("#ibGo").onclick = go;
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+      go();
+    };
     root.querySelector("#imgUrl").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); useUrl(); } });
     root.querySelector("#rmCover").onclick = () => { cover = ""; paintCover(); };
     const pz = root.querySelector("#paste");
@@ -1184,7 +1207,7 @@ function openInfo(mid) {
 }
 
 // ---------- 👤 pessoas: seu perfil + busca ----------
-const safeFoto = (f) => /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(String(f || "")) && String(f).length <= 60000 ? f : "";
+const safeFoto = (f) => { f = String(f || ""); return (/^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(f) && f.length <= 60000) || (/^https:\/\/[^\s"'<>]+$/.test(f) && f.length <= 600) ? f : ""; };
 function avatarHTML(foto, apelido, cls = "") {
   const f = safeFoto(foto);
   return f ? `<img class="av ${cls}" src="${esc(f)}" alt="">` : `<span class="av ${cls} avph">${esc((apelido || "?").slice(0, 1).toUpperCase())}</span>`;
@@ -1204,7 +1227,7 @@ async function imageToAvatar(blob) {
 const perfilData = (patch) => {
   const p = myProfile || {};
   return { apelido: p.apelido || "", publico: !!p.publico, foto: safeFoto(p.foto), oculto: false, atualizadoEm: Date.now(),
-    bio: String(p.bio || "").slice(0, 120), cor: CORES[p.cor] ? p.cor : "", banner: safeBanner(p.banner),
+    bio: String(p.bio || "").slice(0, 120), cor: CORES[p.cor] ? p.cor : "", banner: safeBanner(p.banner), bannerPos: posBanner(p.bannerPos),
     favoritos: Array.isArray(p.favoritos) ? p.favoritos.filter(x => typeof x === "string" && x.length <= 60).slice(0, 3) : [],
     membroDesde: Number(p.membroDesde) || membroDesdeAuth(), ...patch };
 };
@@ -1267,11 +1290,7 @@ function openPeople(tab = "perfil") {
     if (vtm) ligarVitrine(vtm, items, true);
     const ve = root.querySelector("#vtEdit"); if (ve) ve.onclick = openVitrineEdit;
     const fb = root.querySelector("#fotoBtn");
-    if (fb) fb.onclick = () => { const f = $("#file"); f.value = ""; f.onchange = async () => {
-      if (!f.files[0]) return;
-      try { const foto = await imageToAvatar(f.files[0]); await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople("perfil"); }
-      catch (x) { toast("Não foi possível salvar a foto."); }
-    }; f.click(); };
+    if (fb) fb.onclick = openFotoEdit;
     const fr = root.querySelector("#fotoRm");
     if (fr) fr.onclick = async () => { try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto: "" })); myProfile = { ...myProfile, foto: "" }; updateMeBtn(); openPeople("perfil"); } catch (x) { toast("Não foi possível remover."); } };
     root.querySelector("#apForm").addEventListener("submit", async (e) => {
@@ -1314,12 +1333,12 @@ function montarPessoas(root) {
     if (!perfis) return;
     const q = norm(pq.value).replace(/^@/, "");
     const l = perfis.filter(x => x.uid !== currentUser.uid && (!q || norm(x.apelido).includes(q)));
-    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn pcard" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}" style="--vt:${CORES[x.cor] || CORES.roxo}"><span class="pcban">${safeBanner(x.banner) ? `<img src="${esc(safeBanner(x.banner))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span>${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
+    plist.innerHTML = l.length ? l.map(x => `<button class="acct pbtn pcard" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}" style="--vt:${CORES[x.cor] || CORES.roxo}"><span class="pcban">${safeBanner(x.banner) ? `<img src="${esc(safeBanner(x.banner))}" alt="" loading="lazy" referrerpolicy="no-referrer" style="object-position:50% ${posBanner(x.bannerPos)}%">` : ""}</span>${avatarHTML(x.foto, x.apelido)}<div><b>@${esc(x.apelido)}</b><small>Ver estante →</small></div></button>`).join("")
       : `<div class="hint">${perfis.length ? "Ninguém com esse apelido." : "Ainda não há perfis públicos."}</div>`;
   };
   getDocs(query(collection(db, "perfis"), where("publico", "==", true), where("oculto", "==", false)))
     .then(snap => {
-      perfis = snap.docs.map(d => { const v = d.data() || {}; return { uid: d.id, apelido: String(v.apelido || ""), foto: v.foto || "", banner: v.banner || "", cor: v.cor || "" }; }).filter(x => x.apelido);
+      perfis = snap.docs.map(d => { const v = d.data() || {}; return { uid: d.id, apelido: String(v.apelido || ""), foto: v.foto || "", banner: v.banner || "", bannerPos: v.bannerPos, cor: v.cor || "" }; }).filter(x => x.apelido);
       for (let i = perfis.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perfis[i], perfis[j]] = [perfis[j], perfis[i]]; }   // ordem diferente a cada vez
       draw();
     })
@@ -1365,10 +1384,11 @@ const CORES_NOME = { roxo: "Roxo", azul: "Azul", ciano: "Ciano", verde: "Verde",
 const membroDesdeAuth = () => (currentUser && Date.parse(currentUser.metadata && currentUser.metadata.creationTime)) || Date.now();
 function safeBanner(b) {
   b = String(b || "");
-  if (/^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(b) && b.length <= 160000) return b;
+  if (/^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(b) && b.length <= 450000) return b;
   if (/^https:\/\/[^\s"'<>]+$/.test(b) && b.length <= 600) return b;
   return "";
 }
+const posBanner = (v) => { const n = Number(v); return isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 50; };
 const mesAno = (ms) => { if (!ms) return ""; const d = new Date(ms); return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; };
 function haQuanto(ms) {
   if (!ms) return "";
@@ -1391,57 +1411,104 @@ function vitrineHTML(p, its, visita) {
   const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
   return `
   <div class="vt" style="--vt:${cor}">
-    <div class="vtban">${bn ? `<img src="${esc(bn)}" alt="" referrerpolicy="no-referrer">` : ""}</div>
+    <div class="vtban">${bn ? `<img src="${esc(bn)}" alt="" referrerpolicy="no-referrer" style="object-position:50% ${posBanner(p.bannerPos)}%">` : ""}</div>
     <div class="vtin">
       <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div></div>
       ${p.bio ? `<p class="vtbio">${esc(p.bio)}</p>` : ""}
       <div class="vtcnt"><span><i style="background:var(--c-lendo)"></i>${cnt.lendo} lendo</span><span><i style="background:var(--c-fila)"></i>${cnt.fila} na fila</span><span><i style="background:var(--c-pausa)"></i>${plural(cnt.pausado, "pausado", "pausados")}</span><span><i style="background:var(--c-fim)"></i>${plural(cnt.concluido, "concluído", "concluídos")}</span></div>
-      <div class="vtgenin hidden"><div class="vtsec">Gêneros favoritos</div><div class="gens"></div></div>
       ${favs.length ? `<div class="vtsec">Mangás favoritos</div><div class="vtfavs">${favs.map(it => `<button type="button" class="vtfav" data-mid="${esc(it.id)}">${capaMini(it, "vtfc")}<span>${esc(it.title)}</span></button>`).join("")}</div>` : ""}
     </div>
   </div>
   <div class="vtmais">
     ${lendo ? `<div class="vtbox"><div class="vtsec">Lendo agora</div><button type="button" class="vtrow" data-mid="${esc(lendo.id)}">${capaMini(lendo, "vtrc")}<span><b>${esc(lendo.title)}</b><small>Capítulo ${fmtCap(lendo.chapter)}</small></span></button></div>` : ""}
-    <div class="vtbox vtgen hidden"><div class="vtsec">Gêneros favoritos</div><div class="gens"></div></div>
     ${ativ.length ? `<div class="vtbox"><div class="vtsec">Atividade recente</div>${ativ.map(it => `<button type="button" class="vtrow" data-mid="${esc(it.id)}">${capaMini(it, "vtrc")}<span>${visita ? `@${esc(p.apelido || "")}` : "Você"} ${verbo(it)} <b>${esc(it.title)}</b><small>${haQuanto(it.updatedAt || it.createdAt)}</small></span></button>`).join("")}</div>` : ""}
   </div>`;
 }
 // liga os cliques (abre o ⓘ do mangá) e calcula os gêneros favoritos pelo catálogo
 function ligarVitrine(box, its, fechar) {
   box.querySelectorAll("[data-mid]").forEach(b => b.onclick = () => { const id = b.dataset.mid; if (fechar) closeModal(); openInfo(id); });
-  const gbox = box.querySelector(".vtgen"); if (!gbox) return;
-  const ids = [...new Set([...its.values()].map(it => it.catId).filter(Boolean))].slice(0, 60);
-  if (!ids.length) return;
-  Promise.all(ids.map(k => lerCatalogo(k))).then(cats => {
-    const c = {}; cats.forEach(x => ((x && x.generos) || []).forEach(g => { c[g] = (c[g] || 0) + 1; }));
-    const top = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
-    if (!top.length || !gbox.isConnected) return;
-    const chips = top.map(g => `<span>${esc(g)}</span>`).join("");
-    gbox.querySelector(".gens").innerHTML = chips; gbox.classList.remove("hidden");
-    const gin = box.querySelector(".vtgenin"); if (gin) { gin.querySelector(".gens").innerHTML = chips; gin.classList.remove("hidden"); }
-  }).catch(() => {});
 }
 async function bannerDaGaleria(blob) {
   const url = URL.createObjectURL(blob);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const W = 1200, H = 400, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const W = 2400, H = 680, c = document.createElement("canvas"); c.width = W; c.height = H;
     const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     const r = Math.max(W / img.naturalWidth, H / img.naturalHeight), w = W / r, h = H / r;
     ctx.drawImage(img, (img.naturalWidth - w) / 2, (img.naturalHeight - h) / 2, w, h, 0, 0, W, H);
-    for (const [s, qs] of [[1, [0.82, 0.7, 0.6]], [0.75, [0.75, 0.6, 0.5]]]) {
+    for (const [s, qs] of [[1, [0.86, 0.76, 0.66]], [0.8, [0.8, 0.68]], [0.6, [0.75, 0.6]]]) {
       let cv = c; if (s < 1) { cv = document.createElement("canvas"); cv.width = W * s; cv.height = H * s; cv.getContext("2d").drawImage(c, 0, 0, cv.width, cv.height); }
-      for (const q of qs) { let o = cv.toDataURL("image/webp", q); if (!o.startsWith("data:image/webp")) o = cv.toDataURL("image/jpeg", q); if (o.length <= 160000) return o; }
+      for (const q of qs) { let o = cv.toDataURL("image/webp", q); if (!o.startsWith("data:image/webp")) o = cv.toDataURL("image/jpeg", q); if (o.length <= 450000) return o; }
     }
     throw new Error("grande");
   } finally { URL.revokeObjectURL(url); }
 }
-async function buscaBanners(q) {
-  const query = `query($q:String){Page(perPage:25){media(search:$q,isAdult:false,sort:SEARCH_MATCH){id bannerImage title{romaji english}}}}`;
-  const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
-  const vistos = new Set();
-  return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.bannerImage && !vistos.has(m.bannerImage) && vistos.add(m.bannerImage))
-    .map(m => ({ url: m.bannerImage, nome: (m.title.english || m.title.romaji || "").trim() }));
+// ---------- acervo de imagens dentro do app: AniList + MyAnimeList + Kitsu + Wallhaven ----------
+const AL = (query, variables) => httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables }) });
+const okUrl = (u) => typeof u === "string" && /^https:\/\//.test(u) && u.length <= 600;
+async function imgAniList(q, tipo) {   // tipo: "banner" (largas) ou "capa" (em pé)
+  const j = await AL(`query($q:String){Page(perPage:20){media(search:$q,isAdult:false,sort:SEARCH_MATCH){bannerImage coverImage{extraLarge} title{romaji english}}}}`, { q });
+  return ((j.data && j.data.Page && j.data.Page.media) || []).map(m => ({ url: tipo === "banner" ? m.bannerImage : (m.coverImage && m.coverImage.extraLarge), nome: (m.title.english || m.title.romaji || "").trim(), fonte: "AniList" })).filter(x => okUrl(x.url));
+}
+async function imgKitsu(q, tipo) {
+  const out = [];
+  for (const t of ["manga", "anime"]) {
+    const j = await httpJSON(`https://kitsu.app/api/edge/${t}?filter%5Btext%5D=${encodeURIComponent(q)}&page%5Blimit%5D=8`, { headers: { Accept: "application/vnd.api+json" } });
+    for (const d of (j.data || [])) {
+      const a = d.attributes || {}; if (a.nsfw) continue;
+      const im = tipo === "banner" ? a.coverImage : a.posterImage;
+      const url = im && (im.original || im.large);
+      if (okUrl(url)) out.push({ url, nome: (a.canonicalTitle || "").trim(), fonte: "Kitsu" });
+    }
+  }
+  return out;
+}
+async function imgMAL(q) {   // várias capas da mesma obra (volumes, edições)
+  const j = await httpJSON(`https://api.jikan.moe/v4/manga?q=${encodeURIComponent(q)}&limit=3&sfw=true`);
+  const out = [];
+  for (const m of (j.data || []).slice(0, 2)) {
+    const nome = (m.title_english || m.title || "").trim();
+    const capa = m.images && m.images.jpg && m.images.jpg.large_image_url; if (okUrl(capa)) out.push({ url: capa, nome, fonte: "MyAnimeList" });
+    try {
+      const p = await httpJSON(`https://api.jikan.moe/v4/manga/${m.mal_id}/pictures`);
+      for (const f of (p.data || [])) { const u = f.jpg && (f.jpg.large_image_url || f.jpg.image_url); if (okUrl(u)) out.push({ url: u, nome, fonte: "MyAnimeList" }); }
+    } catch (e) {}
+  }
+  return out;
+}
+async function imgWallhaven(q, tipo) {   // só conteúdo seguro (purity=100), categoria anime
+  const j = await httpJSON(`https://wallhaven.cc/api/v1/search?q=${encodeURIComponent(q)}&categories=010&purity=100&sorting=relevance${tipo === "banner" ? "&atleast=1920x600" : ""}`);
+  return (j.data || []).filter(w => w.purity === "sfw").filter(w => { const r = (w.dimension_x || 1) / (w.dimension_y || 1); return tipo === "banner" ? r >= 1.4 : r <= 0.85; })
+    .filter(w => (w.dimension_x || 0) <= 4000).map(w => ({ url: w.path, thumb: w.thumbs && (w.thumbs.large || w.thumbs.small), nome: `${w.dimension_x}×${w.dimension_y}`, fonte: "Wallhaven", hd: (w.dimension_x || 0) >= 1920 })).filter(x => okUrl(x.url));
+}
+// junta todas as fontes, sem repetir, intercalando para misturar
+async function buscaImagens(q, tipo) {
+  const tarefas = tipo === "banner" ? [imgAniList(q, "banner"), imgWallhaven(q, "banner"), imgKitsu(q, "banner")]
+    : [imgAniList(q, "capa"), imgMAL(q), imgKitsu(q, "capa"), imgWallhaven(q, "capa")];
+  const res = await Promise.allSettled(tarefas);
+  const listas = res.filter(r => r.status === "fulfilled").map(r => r.value);
+  if (!listas.length) throw new Error("falhou");
+  const out = [], vistos = new Set();
+  for (let i = 0; i < 40; i++) for (const l of listas) { const x = l[i]; if (x && !vistos.has(x.url)) { vistos.add(x.url); out.push(x); } }
+  return out;
+}
+// personagens (para a foto de perfil): os dos mangás da estante + busca por nome
+async function personagensDaEstante() {
+  const mal = [...new Set([...items.values()].map(it => it.catId).filter(k => /^mal\d+$/.test(k || "")).map(k => Number(k.slice(3))))].slice(0, 10);
+  const al = [...new Set([...items.values()].map(it => it.catId).filter(k => /^al\d+$/.test(k || "")).map(k => Number(k.slice(2))))].slice(0, 10);
+  if (!mal.length && !al.length) return [];
+  const campos = `title{romaji english} characters(sort:[ROLE,FAVOURITES_DESC],perPage:8){nodes{name{full} image{large}}}`;
+  const j = await AL(`query($m:[Int],$a:[Int]){m:Page(perPage:10){media(idMal_in:$m,type:MANGA){${campos}}} a:Page(perPage:10){media(id_in:$a){${campos}}}}`, { m: mal.length ? mal : [0], a: al.length ? al : [0] });
+  const ms = [...((j.data && j.data.m && j.data.m.media) || []), ...((j.data && j.data.a && j.data.a.media) || [])];
+  const out = [];
+  for (const m of ms) for (const c of ((m.characters && m.characters.nodes) || [])) {
+    const u = c.image && c.image.large; if (okUrl(u) && !/default\.jpg/.test(u)) out.push({ url: u, nome: c.name.full, obra: (m.title.english || m.title.romaji || "") });
+  }
+  return out;
+}
+async function buscaPersonagens(q) {
+  const j = await AL(`query($q:String){Page(perPage:30){characters(search:$q,sort:FAVOURITES_DESC){name{full} image{large} media(perPage:1){nodes{title{romaji english}}}}}}`, { q });
+  return ((j.data && j.data.Page && j.data.Page.characters) || []).map(c => ({ url: c.image && c.image.large, nome: c.name.full, obra: ((c.media && c.media.nodes && c.media.nodes[0] && c.media.nodes[0].title) || {}).romaji || "" })).filter(x => okUrl(x.url) && !/default\.jpg/.test(x.url));
 }
 // ---------- busca de GIFs: GIPHY + KLIPY juntos (chaves vêm do GitHub, em version.js) ----------
 const gifKeys = () => { const k = window.GIF_KEYS || {}; return { giphy: String(k.giphy || ""), klipy: String(k.klipy || "") }; };
@@ -1456,16 +1523,18 @@ async function buscaGiphy(q, key) {
     const im = g.images || {};
     const full = (im.original && im.original.url) || (im.downsized && im.downsized.url) || "";
     const thumb = (im.fixed_width_downsampled && im.fixed_width_downsampled.url) || (im.fixed_width && im.fixed_width.url) || full;
-    return { url: full.split("?")[0], thumb, fonte: "GIPHY", w: Number(im.original && im.original.width) || 0, h: Number(im.original && im.original.height) || 0 };
+    const w = Number(im.original && im.original.width) || 0;
+    return { url: full.split("?")[0], thumb, fonte: "GIPHY", w, hd: w >= 700 };
   }).filter(g => /^https:\/\//.test(g.url));
 }
 async function buscaKlipy(q, key) {
   const cid = encodeURIComponent((currentUser && currentUser.uid) || "anon");
   const j = await httpJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&page=1&customer_id=${cid}&locale=pt_BR&content_filter=medium`);
   const lista = (j.data && (j.data.data || j.data)) || [];
-  return (Array.isArray(lista) ? lista : []).filter(g => g && g.file && g.type !== "ad").map(g => ({
-    url: urlGif(g.file, ["hd", "md", "sm"]), thumb: urlGif(g.file, ["sm", "xs", "md"]), fonte: "KLIPY",
-  })).filter(g => g.url);
+  return (Array.isArray(lista) ? lista : []).filter(g => g && g.file && g.type !== "ad").map(g => {
+    const hdf = g.file.hd && (g.file.hd.gif || g.file.hd.webp); const w = Number(hdf && hdf.width) || 0;
+    return { url: urlGif(g.file, ["hd", "md", "sm"]), thumb: urlGif(g.file, ["sm", "xs", "md"]), fonte: "KLIPY", w, hd: w >= 700 };
+  }).filter(g => g.url);
 }
 async function buscaGifs(q) {
   const k = gifKeys(), tarefas = [];
@@ -1476,13 +1545,13 @@ async function buscaGifs(q) {
   if (!listas.length) throw new Error("falhou");
   const out = [], vistos = new Set();
   for (let i = 0; i < 30; i++) for (const l of listas) { const g = l[i]; if (g && !vistos.has(g.url)) { vistos.add(g.url); out.push(g); } }   // intercala as fontes
-  return out;
+  return out.sort((a, b) => (b.hd ? 1 : 0) - (a.hd ? 1 : 0));   // alta resolução primeiro
 }
 const testaImagem = (u) => new Promise((res) => { const i = new Image(); i.referrerPolicy = "no-referrer"; const t = setTimeout(() => res(false), 12000); i.onload = () => { clearTimeout(t); res(i.naturalWidth > 0); }; i.onerror = () => { clearTimeout(t); res(false); }; i.src = u; });
 
 function openVitrineEdit() {
   const p = myProfile || {};
-  const d = { banner: safeBanner(p.banner), cor: CORES[p.cor] ? p.cor : "roxo", bio: String(p.bio || ""), favoritos: (p.favoritos || []).filter(id => items.has(id)).slice(0, 3) };
+  const d = { banner: safeBanner(p.banner), pos: posBanner(p.bannerPos), cor: CORES[p.cor] ? p.cor : "roxo", bio: String(p.bio || ""), favoritos: (p.favoritos || []).filter(id => items.has(id)).slice(0, 3) };
   const meus = [...items.values()].sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   openModal(`
     <div class="mhead"><h2>✏️ Editar vitrine</h2><button type="button" class="icon-btn" data-x>✕</button></div>
@@ -1496,6 +1565,7 @@ function openVitrineEdit() {
           <button type="button" class="btn" data-modo="gif">🎞️ GIF</button>
         </div>
         <div id="vePainel"></div>
+        <label class="vepos hidden" id="vePosL">Enquadramento <small>(arraste para escolher a parte da imagem que aparece)</small><input type="range" id="vePos" min="0" max="100" step="1"></label>
         <button type="button" class="btn ghost hidden" id="veRm">Remover capa</button>
       </div>
       <div class="sect">
@@ -1518,17 +1588,19 @@ function openVitrineEdit() {
     const ban = root.querySelector("#veBan"), painel = root.querySelector("#vePainel"), rm = root.querySelector("#veRm");
     const showBan = () => {
       ban.style.setProperty("--vt", CORES[d.cor]);
-      ban.innerHTML = d.banner ? `<img src="${esc(d.banner)}" alt="" referrerpolicy="no-referrer">` : `<span>Sem capa: fica na cor do perfil</span>`;
-      rm.classList.toggle("hidden", !d.banner);
+      ban.innerHTML = d.banner ? `<img src="${esc(d.banner)}" alt="" referrerpolicy="no-referrer" style="object-position:50% ${d.pos}%">` : `<span>Sem capa: fica na cor do perfil</span>`;
+      rm.classList.toggle("hidden", !d.banner); root.querySelector("#vePosL").classList.toggle("hidden", !d.banner);
     };
     showBan();
     rm.onclick = () => { d.banner = ""; showBan(); };
+    const posI = root.querySelector("#vePos"); posI.value = d.pos;
+    posI.addEventListener("input", () => { d.pos = posBanner(posI.value); const im = ban.querySelector("img"); if (im) im.style.objectPosition = `50% ${d.pos}%`; });
     const modos = root.querySelectorAll("[data-modo]");
     const marca = (m) => modos.forEach(b => b.classList.toggle("on", b.dataset.modo === m));
     root.querySelector('[data-modo="cat"]').onclick = () => {
       marca("cat");
       const sug = (d.favoritos.map(id => items.get(id)).filter(Boolean)[0] || meus[0] || {}).title || "";
-      painel.innerHTML = `<p class="hint">Banners prontos das obras (AniList). Busque pelo nome e toque em um.</p>
+      painel.innerHTML = `<p class="hint">Imagens de AniList, Wallhaven e Kitsu. Busque pelo nome da obra ou do personagem e toque em uma.</p>
         <div class="urlrow"><input id="vbQ" placeholder="Nome da obra (ex.: Eleceed)" value="${esc(sug)}"><button type="button" class="btn" id="vbGo">Buscar</button></div>
         <div id="vbRes" class="vbres"></div>`;
       const q = painel.querySelector("#vbQ"), res = painel.querySelector("#vbRes");
@@ -1537,8 +1609,8 @@ function openVitrineEdit() {
         if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
         res.innerHTML = `<p class="hint">Buscando…</p>`;
         try {
-          const l = await buscaBanners(t);
-          res.innerHTML = l.length ? l.map(b => `<button type="button" class="vbopt" data-u="${esc(b.url)}" title="${esc(b.nome)}"><img src="${esc(b.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"><small>${esc(b.nome)}</small></button>`).join("")
+          const l = await buscaImagens(t, "banner");
+          res.innerHTML = l.length ? l.map(b => `<button type="button" class="vbopt" data-u="${esc(b.url)}" title="${esc(b.nome)}"><img src="${esc(b.thumb || b.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${b.hd ? `<i class="hdtag">HD</i>` : ""}<small>${esc(b.fonte)} · ${esc(b.nome)}</small></button>`).join("")
             : `<p class="hint">Nenhum banner encontrado para "${esc(t)}". Tente o nome em inglês ou japonês, ou use Galeria/GIF.</p>`;
           res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => { d.banner = safeBanner(b.dataset.u); showBan(); res.querySelectorAll(".vbopt").forEach(x => x.classList.toggle("on", x === b)); });
         } catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora. Tente de novo.</p>`; }
@@ -1548,7 +1620,7 @@ function openVitrineEdit() {
       if (sug) buscar();
     };
     root.querySelector('[data-modo="gal"]').onclick = () => {
-      marca("gal"); painel.innerHTML = `<p class="hint">Escolha uma imagem do seu PC ou celular. Ela é cortada no formato de capa (largura 3× a altura).</p>`;
+      marca("gal"); painel.innerHTML = `<p class="hint">Escolha uma imagem do seu PC ou celular. Ela é cortada no formato de capa (bem larga, em alta resolução).</p>`;
       const f = $("#file"); f.value = "";
       f.onchange = async () => {
         if (!f.files[0]) return;
@@ -1576,7 +1648,7 @@ function openVitrineEdit() {
           res.innerHTML = `<p class="hint">Buscando GIFs…</p>`;
           try {
             const l = await buscaGifs(t);
-            res.innerHTML = l.length ? l.map(g => `<button type="button" class="vgopt" data-u="${esc(g.url)}" title="${esc(g.fonte)}"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join("")
+            res.innerHTML = l.length ? l.map(g => `<button type="button" class="vgopt" data-u="${esc(g.url)}" title="${esc(g.fonte)}"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${g.hd ? `<i class="hdtag">HD</i>` : ""}</button>`).join("")
               : `<p class="hint">Nenhum GIF encontrado para "${esc(t)}". Tente em inglês (ex.: "solo leveling anime").</p>`;
             res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
               const u = safeBanner(b.dataset.u); if (!u || u.startsWith("data:")) return;
@@ -1635,7 +1707,7 @@ function openVitrineEdit() {
     root.querySelector("#veSave").onclick = async () => {
       const texto = bio.value.replace(/\s+/g, " ").trim().slice(0, 120);
       if (texto && AP_RUINS_CONTEM.some(w => norm(texto).replace(/[^a-z]/g, "").includes(w))) { toast("A mini-bio tem palavras não permitidas.", 4000); return; }
-      const patch = { banner: d.banner, cor: d.cor, bio: texto, favoritos: d.favoritos.slice(0, 3) };
+      const patch = { banner: d.banner, bannerPos: d.pos, cor: d.cor, bio: texto, favoritos: d.favoritos.slice(0, 3) };
       try {
         await setDoc(doc(db, "perfis", currentUser.uid), perfilData(patch));
         myProfile = { ...myProfile, ...patch };
@@ -1643,6 +1715,75 @@ function openVitrineEdit() {
       } catch (x) {
         toast(x.code === "permission-denied" ? "O servidor recusou. As regras novas do Firebase ainda não foram publicadas." : (x.code === "invalid-argument" ? "A imagem da capa ficou grande demais. Tente outra." : "Não foi possível salvar agora. Verifique a internet."), 5000);
       }
+    };
+  }, { wide: true });
+}
+
+function openFotoEdit() {
+  const p = myProfile || {};
+  let foto = safeFoto(p.foto);
+  openModal(`
+    <div class="mhead"><h2>📷 Foto de perfil</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody vedit vfoto">
+      <div class="sect vecapa">
+        <div class="fotoprev" id="fpPrev"></div>
+        <div class="vemodo">
+          <button type="button" class="btn" data-fm="gal">🖼️ Galeria</button>
+          <button type="button" class="btn" data-fm="per">👤 Personagens</button>
+          <button type="button" class="btn" data-fm="gif">🎞️ GIF</button>
+        </div>
+        <button type="button" class="btn ghost" id="fpRm">Remover foto</button>
+      </div>
+      <div class="sect"><div id="fpPainel"><p class="hint">Escolha de onde vem a foto: da sua galeria, de um personagem ou de um GIF animado.</p></div></div>
+    </div>
+    <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="button" class="btn primary" id="fpSave">Salvar</button></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const prev = root.querySelector("#fpPrev"), painel = root.querySelector("#fpPainel");
+    const mostra = () => { prev.innerHTML = avatarHTML(foto, p.apelido, "huge"); root.querySelector("#fpRm").classList.toggle("hidden", !foto); };
+    mostra();
+    root.querySelector("#fpRm").onclick = () => { foto = ""; mostra(); };
+    const modos = root.querySelectorAll("[data-fm]"); const marca = (m) => modos.forEach(b => b.classList.toggle("on", b.dataset.fm === m));
+    const grade = (lista, cls) => lista.map(x => `<button type="button" class="${cls}" data-u="${esc(x.url)}" title="${esc(x.nome || "")}"><img src="${esc(x.thumb || x.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${x.hd ? `<i class="hdtag">HD</i>` : ""}${x.nome ? `<small>${esc(x.nome)}</small>` : ""}</button>`).join("");
+    const ligar = (res) => res.querySelectorAll("[data-u]").forEach(b => b.onclick = () => { const u = safeFoto(b.dataset.u); if (!u) return; foto = u; mostra(); res.querySelectorAll("[data-u]").forEach(x => x.classList.toggle("on", x === b)); });
+    const busca = (ph, fn, cls, inicial) => {
+      painel.innerHTML = `<div class="urlrow"><input id="fpQ" placeholder="${esc(ph)}" autocomplete="off"><button type="button" class="btn" id="fpGo">Buscar</button></div><div id="fpRes" class="fpres"></div>`;
+      const q = painel.querySelector("#fpQ"), res = painel.querySelector("#fpRes");
+      const go = async (txt) => {
+        if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
+        res.innerHTML = `<p class="hint">Buscando…</p>`;
+        try { const l = await fn(txt); res.innerHTML = l.length ? grade(l, cls) : `<p class="hint">Nada encontrado. Tente outro nome (em inglês costuma achar mais).</p>`; ligar(res); }
+        catch (e) { res.innerHTML = `<p class="err">Não consegui buscar agora. Tente de novo daqui a pouco.</p>`; }
+      };
+      painel.querySelector("#fpGo").onclick = () => { const t = q.value.trim(); if (t) go(t); else q.focus(); };
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); painel.querySelector("#fpGo").click(); } });
+      if (inicial) inicial(res, go);
+    };
+    root.querySelector('[data-fm="gal"]').onclick = () => {
+      marca("gal"); painel.innerHTML = `<p class="hint">Escolha uma foto do seu PC ou celular. Ela é cortada em círculo.</p>`;
+      const f = $("#file"); f.value = "";
+      f.onchange = async () => { if (!f.files[0]) return; try { foto = await imageToAvatar(f.files[0]); mostra(); painel.innerHTML = `<p class="hint">✅ Foto pronta. Toque em Salvar.</p>`; } catch (e) { painel.innerHTML = `<p class="err">Não consegui usar essa imagem.</p>`; } };
+      f.click();
+    };
+    root.querySelector('[data-fm="per"]').onclick = () => {
+      marca("per");
+      busca("Nome do personagem (ex.: Sung Jinwoo, Luffy)", buscaPersonagens, "fpopt", async (res) => {
+        res.innerHTML = `<p class="hint">Carregando personagens dos mangás da sua estante…</p>`;
+        try {
+          const l = await personagensDaEstante();
+          res.innerHTML = l.length ? `<p class="hint fpsub">Dos mangás da sua estante:</p>${grade(l, "fpopt")}` : `<p class="hint">Busque pelo nome do personagem. (Para sugestões automáticas, vincule seus mangás ao catálogo.)</p>`;
+          ligar(res);
+        } catch (e) { res.innerHTML = `<p class="hint">Busque pelo nome do personagem.</p>`; }
+      });
+    };
+    root.querySelector('[data-fm="gif"]').onclick = () => {
+      marca("gif");
+      if (!temBuscaGif()) { painel.innerHTML = `<p class="hint">A busca de GIF não está disponível nesta versão.</p>`; return; }
+      busca("Buscar GIF (ex.: sung jinwoo)", buscaGifs, "fpopt gif", null);
+      painel.insertAdjacentHTML("beforeend", `<p class="vgcred">GIFs: Powered by GIPHY · KLIPY</p>`);
+    };
+    root.querySelector("#fpSave").onclick = async () => {
+      try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople("perfil"); }
+      catch (x) { toast("Não foi possível salvar a foto. Verifique a internet.", 4000); }
     };
   }, { wide: true });
 }
