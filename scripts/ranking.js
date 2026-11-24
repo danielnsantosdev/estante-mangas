@@ -65,20 +65,31 @@ async function buscaMAL(titulo) {   // segunda opção: MyAnimeList (Jikan), o m
   }
   return null;
 }
+// Baixa a capa e guarda dentro do ranking (o MangaDex não deixa outros apps exibirem as capas direto do site dele)
+async function capaEmbutida(url) {
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": "EstanteMangas-Ranking/1.0" } });
+    if (!r.ok) { console.log(`Capa não baixou (${r.status}): ${url}`); return ""; }
+    const tipo = (r.headers.get("content-type") || "image/jpeg").split(";")[0];
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!/^image\//.test(tipo) || buf.length > 90000) return "";
+    return `data:${tipo};base64,${buf.toString("base64")}`;
+  } catch (e) { return ""; }
+}
 async function buscaMangaDex(titulo) {   // terceira opção: MangaDex (tem nomes em português)
   try {
     const r = await fetch(`https://api.mangadex.org/manga?title=${encodeURIComponent(titulo)}&limit=8&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive`, { headers: { "User-Agent": "EstanteMangas-Ranking/1.0" } });
     if (!r.ok) { console.log(`MangaDex respondeu ${r.status} para "${titulo}"`); return null; }
     const j = await r.json();
-    const m = (j.data || []).find(x => { const a = x.attributes || {}; return [...Object.values(a.title || {}), ...(a.altTitles || []).flatMap(t => Object.values(t))].some(n => parecido(n, titulo)); });
+    let nome = "";
+    const m = (j.data || []).find(x => { const a = x.attributes || {}; const n = [...Object.values(a.title || {}), ...(a.altTitles || []).flatMap(t => Object.values(t))].find(n => parecido(n, titulo)); if (n) nome = n; return !!n; });
     if (!m) { console.log(`MangaDex: nada parecido com "${titulo}"`); return null; }
     const a = m.attributes || {}, links = a.links || {};
-    const nomeEn = (a.title && (a.title.en || Object.values(a.title)[0])) || "";
-    const ing = ((a.altTitles || []).find(t => t.en) || {}).en || "";
+    // nome mostrado: o nome da obra que bateu com o que o leitor digitou (o mais conhecido), sem os erros de digitação
     const cov = (m.relationships || []).find(x => x.type === "cover_art");
-    const capa = cov && cov.attributes && cov.attributes.fileName ? `https://uploads.mangadex.org/covers/${m.id}/${cov.attributes.fileName}.512.jpg` : "";
+    const capa = cov && cov.attributes && cov.attributes.fileName ? await capaEmbutida(`https://uploads.mangadex.org/covers/${m.id}/${cov.attributes.fileName}.256.jpg`) : "";
     const chave = links.mal ? "mal" + links.mal : (links.al ? "al" + links.al : "md:" + m.id);
-    return { chave, titulo: nomeEn, titulo2: ing && norm(ing) !== norm(nomeEn) ? ing : "", capa };
+    return { chave, titulo: nome, titulo2: "", capa };
   } catch (e) { console.log(`MangaDex falhou para "${titulo}": ${e.message}`); return null; }
 }
 async function buscaCatalogo(titulo) { return (await buscaAniList(titulo)) || (await buscaMAL(titulo)) || (await buscaMangaDex(titulo)); }
