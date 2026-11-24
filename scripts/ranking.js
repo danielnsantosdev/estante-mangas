@@ -54,7 +54,8 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
       const o = obras.get(chave);
       o.titulos.set(x.title, (o.titulos.get(x.title) || 0) + 1);
       if (!o.titulo2 && x.titulo2) o.titulo2 = x.titulo2;
-      if (!o.capa && /^https?:\/\//.test(x.cover || "")) o.capa = x.cover;
+      const cv = String(x.cover || "");
+      if (!o.capa && (/^https?:\/\//.test(cv) || (/^data:image\//.test(cv) && cv.length < 120000))) o.capa = cv;   // link ou foto enviada
       if (st === "lendo" || st === "concluido") o.leitores.add(p.id);           // "mais lidos" = Lendo + Concluído
       if (typeof x.nota === "number") o.notas.push(x.nota);
       if (st === "concluido") lidos++;
@@ -65,11 +66,14 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
   // nomes e capas do catálogo (em português) têm prioridade
   const lista = [];
   for (const [chave, o] of obras) {
-    let titulo = [...o.titulos.entries()].sort((a, b) => b[1] - a[1])[0][0], titulo2 = o.titulo2, capa = o.capa;
+    // em destaque: o nome mais popular (do catálogo); embaixo: o nome que os leitores digitaram
+    const digitado = [...o.titulos.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    let titulo = digitado, titulo2 = "", capa = o.capa;
     if (!chave.startsWith("nome:")) {
       const c = await db.collection("catalogo").doc(chave).get();
-      if (c.exists) { const d = c.data(); titulo = d.titulo || titulo; titulo2 = d.titulo2 || titulo2; capa = d.capa || capa; }
+      if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || digitado; capa = d.capa || capa; }
     }
+    if (norm(digitado) !== norm(titulo)) titulo2 = digitado;
     lista.push({ chave, titulo, titulo2: titulo2 || "", capa: capa || "", leitores: o.leitores.size, notas: o.notas.length, media: o.notas.length ? media(o.notas) : 0 });
   }
 

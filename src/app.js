@@ -1319,13 +1319,21 @@ async function montarRanking(root) {
   const lista = (arr, f) => (arr && arr.length) ? arr.map(f).join("") : `<p class="hint">Ainda sem dados suficientes.</p>`;
   box.innerHTML = `
     <div class="rkhead">🏆 Ranking de ${esc(nomeMes(r.mes))}</div>
-    <div class="sect"><div class="secth">📚 Mais lidos</div>${lista(r.maisLidos, (x, i) => obra(x, i, `${x.leitores} ${x.leitores === 1 ? "leitor" : "leitores"}`))}</div>
+    <div class="sect"><div class="secth">📚 Mais lidos</div>${lista(r.maisLidos, (x, i) => obra(x, i, ""))}</div>
     <div class="sect"><div class="secth">⭐ Mais bem avaliados</div>${lista(r.melhores, (x, i) => obra(x, i, `⭐ ${fmtNota(x.media)}<small>${x.notas} notas</small>`))}</div>
-    <div class="sect"><div class="secth">🏅 Top 10 leitores</div>${lista(r.leitores, (x, i) => `<button class="rkrow pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}"><span class="rkpos">${i + 1}</span><span class="rkav" data-av="${esc(x.uid)}">${avatarHTML("", x.apelido)}</span><span class="rkt"><b>@${esc(x.apelido)}</b></span><span class="rkm">${x.lidos} ${x.lidos === 1 ? "lido" : "lidos"}</span></button>`)}</div>
+    <div class="sect"><div class="secth">🏅 Top 10 leitores</div>${lista(r.leitores, (x, i) => `<button class="rkrow pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}"><span class="rkpos">${i + 1}</span><span class="rkav" data-av="${esc(x.uid)}">${avatarHTML("", x.apelido)}</span><span class="rkt"><b data-ap-of="${esc(x.uid)}">@${esc(x.apelido)}</b></span><span class="rkm">${x.lidos} ${x.lidos === 1 ? "lido" : "lidos"}</span></button>`)}</div>
     ${aviso}`;
   box.querySelectorAll("[data-uid]").forEach(b => b.onclick = () => openVisit(b.dataset.uid, b.dataset.ap, ""));
   for (const el of box.querySelectorAll("[data-av]")) {
-    getDoc(doc(db, "perfis", el.dataset.av)).then(d => { if (d.exists() && el.isConnected) el.innerHTML = avatarHTML((d.data() || {}).foto, (d.data() || {}).apelido); }).catch(() => {});
+    getDoc(doc(db, "perfis", el.dataset.av)).then(d => {
+      if (!d.exists() || !el.isConnected) return;
+      const pf = d.data() || {};
+      el.innerHTML = avatarHTML(pf.foto, pf.apelido);
+      if (pf.apelido) {   // mostra sempre o apelido atual do perfil, do jeito que a pessoa digitou
+        const b = box.querySelector(`[data-ap-of="${el.dataset.av}"]`); if (b) b.textContent = "@" + pf.apelido;
+        const row = el.closest("[data-ap]"); if (row) row.dataset.ap = pf.apelido;
+      }
+    }).catch(() => {});
   }
 }
 
