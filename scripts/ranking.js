@@ -3,8 +3,31 @@
 // Só entram perfis PÚBLICOS e não ocultos. O app apenas lê o resultado pronto.
 const admin = require("firebase-admin");
 
-const sa = JSON.parse(process.env.FIREBASE_SA || "{}");
-if (!sa.project_id) { console.error("Segredo FIREBASE_SA ausente ou inválido."); process.exit(1); }
+// Lê a chave (segredo FIREBASE_SA) e conserta defeitos comuns de copiar e colar:
+// barras "\" seguidas de quebra de linha, quebras de linha soltas dentro do texto, aspas "inteligentes" etc.
+function lerChave(txt) {
+  txt = String(txt || "").replace(/^\uFEFF/, "").trim();
+  const tentativas = [
+    (t) => t,
+    (t) => t.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'"),
+    (t) => t.replace(/\\\r?\n/g, "\\n"),                                   // "\" + quebra de linha  ->  \n
+    (t) => t.replace(/\r?\n(?=[^"]*"(?:[^"]*"[^"]*")*[^"]*$)/g, "\\n"),     // quebra de linha dentro de aspas -> \n
+    (t) => t.replace(/\\(?!["\\/bfnrtu])/g, "\\\\"),                       // barra solta -> barra escapada
+  ];
+  let t = txt;
+  for (const f of tentativas) {
+    t = f(t);
+    try { return JSON.parse(t); } catch (e) {}
+  }
+  // última tentativa: todas as correções juntas, a partir do original
+  t = tentativas.reduce((acc, f) => f(acc), txt);
+  return JSON.parse(t);
+}
+let sa = {};
+try { sa = lerChave(process.env.FIREBASE_SA); }
+catch (e) { console.error("A chave FIREBASE_SA não pôde ser lida (" + e.message + "). Gere uma nova chave no Firebase e cole o arquivo .json inteiro no segredo."); process.exit(1); }
+if (!sa.project_id || !sa.private_key || !sa.client_email) { console.error("A chave FIREBASE_SA está incompleta. Cole o arquivo .json inteiro, do { ao }."); process.exit(1); }
+sa.private_key = String(sa.private_key).replace(/\\n/g, "\n");
 admin.initializeApp({ credential: admin.credential.cert(sa) });
 const db = admin.firestore();
 
