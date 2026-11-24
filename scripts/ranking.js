@@ -37,13 +37,41 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
 // Busca a obra no mesmo catálogo do app (AniList) quando o mangá não foi vinculado,
 // para o ranking ter sempre o nome popular e a capa oficial.
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const parecido = (a, b) => { a = norm(a).replace(/[^a-z0-9]/g, ""); b = norm(b).replace(/[^a-z0-9]/g, ""); return !!a && !!b && (a === b || (a.length >= 5 && b.includes(a)) || (b.length >= 5 && a.includes(b))); };
+function distancia(a, b) {   // quantas letras trocar para um virar o outro (aceita erro de digitação)
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+const parecido = (a, b) => {
+  a = norm(a).replace(/[^a-z0-9]/g, ""); b = norm(b).replace(/[^a-z0-9]/g, "");
+  if (!a || !b) return false;
+  if (a === b || (a.length >= 5 && b.includes(a)) || (b.length >= 5 && a.includes(b))) return true;
+  return Math.min(a.length, b.length) >= 8 && distancia(a, b) <= 2;
+};
+async function buscaMAL(titulo) {   // segunda opção: MyAnimeList (Jikan), o mesmo que o app usa
+  for (let t = 0; t < 3; t++) {
+    try {
+      const r = await fetch(`https://api.jikan.moe/v4/manga?q=${encodeURIComponent(titulo)}&limit=8&sfw=true`);
+      if (r.status === 429) { await sleep(4000); continue; }
+      if (!r.ok) return null;
+      const j = await r.json();
+      const m = (j.data || []).filter(x => !/novel/i.test(x.type || "")).find(x => [x.title, x.title_english, x.title_japanese, ...(x.title_synonyms || []), ...((x.titles || []).map(y => y.title))].some(n => parecido(n, titulo)));
+      if (!m) return null;
+      const img = (m.images && ((m.images.jpg && m.images.jpg.large_image_url) || (m.images.webp && m.images.webp.large_image_url))) || "";
+      return { chave: "mal" + m.mal_id, titulo: (m.title || "").trim(), titulo2: (m.title_english || "").trim(), capa: img };
+    } catch (e) { await sleep(1500); }
+  }
+  return null;
+}
+async function buscaCatalogo(titulo) { return (await buscaAniList(titulo)) || (await buscaMAL(titulo)); }
 async function buscaAniList(titulo) {
   const query = `query($q:String){Page(perPage:5){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large}}}}`;
   for (let t = 0; t < 3; t++) {
     try {
       const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q: titulo } }) });
-      if (r.status === 429) { await sleep(5000); continue; }
+      if (r.status === 429) { await sleep((Number(r.headers.get("retry-after")) || 30) * 1000 + 500); continue; }
       if (!r.ok) return null;
       const j = await r.json();
       const lista = (j.data && j.data.Page && j.data.Page.media) || [];
@@ -83,7 +111,7 @@ async function buscaAniList(titulo) {
   const porNome = new Map();
   for (const e of entradas) if (!e.catId && e.title && !porNome.has(norm(e.title))) porNome.set(norm(e.title), e.title);
   const achados = new Map();
-  for (const [k, titulo] of porNome) { achados.set(k, await buscaAniList(titulo)); await sleep(800); }
+  for (const [k, titulo] of porNome) { achados.set(k, await buscaCatalogo(titulo)); await sleep(2200); }
   for (const e of entradas) if (!e.catId) { const a = achados.get(norm(e.title)); if (a) { e.catId = a.chave; e.aniList = a; } }
 
   // 2) agrupa por obra
@@ -109,7 +137,7 @@ async function buscaAniList(titulo) {
       if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || titulo; capa = d.capa || ""; }
       else if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; }
       else {
-        const a = await buscaAniList(digitado); await sleep(800);
+        const a = await buscaCatalogo(digitado); await sleep(2200);
         if (a && a.chave === chave) { titulo = a.titulo2 || a.titulo || titulo; capa = a.capa; }
       }
     }
@@ -131,6 +159,6 @@ async function buscaAniList(titulo) {
   await db.collection("ranking").doc("atual").set(dados);
   await db.collection("ranking").doc(mes).set(dados);
   console.log(`Ranking de ${mes} gerado com ${contados} perfis públicos e ${lista.length} obras.`);
-  if (semCapa.length) console.log("Obras sem capa (não achadas no catálogo): " + semCapa.join(" | "));
+  if (semCapa.length) console.log("Obras sem capa (não achadas no AniList nem no MyAnimeList): " + semCapa.join(" | "));
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });
