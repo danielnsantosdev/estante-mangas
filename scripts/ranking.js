@@ -1,6 +1,6 @@
 // Ranking da Estante de Mangás.
 // Roda no GitHub todo dia (e manualmente na aba Actions) e grava o resultado no Firebase:
-//  - todo dia: guarda o histórico de leituras e calcula Em alta, Esta semana, Este mês, Por gênero e "Quem lê";
+//  - todo dia: guarda o histórico de leituras e calcula Em alta (mais lidos em 7 dias), Este mês, Por gênero e "Quem lê";
 //  - dia 1º (ou rodando manualmente): recalcula "Todos os tempos" (somando o histórico inteiro).
 // Só entram perfis PÚBLICOS e não ocultos. Leituras antigas continuam contando para as obras
 // mesmo se a pessoa apagar o mangá ou fechar o perfil (sem mostrar quem foi).
@@ -226,12 +226,8 @@ const ehCat = (k) => /^(al|mal)\d+$/.test(k || "");
   // 5) períodos (todo dia)
   const semana = conta(h => h.lido && h.ultimaLeitura >= segunda);
   const mes = conta(h => h.lido && h.ultimaLeitura >= inicioMes);
-  const alta = new Map();
-  for (const h of hist.values()) {
-    if (!h.lido) continue;
-    const pts = (h.desde >= seteDias ? 2 : 0) + (h.ultimaLeitura >= seteDias ? 1 : 0);
-    if (pts) alta.set(h.chave, (alta.get(h.chave) || 0) + pts);
-  }
+  // Em alta: os mais lidos dos últimos 7 dias (o antigo "Esta semana" saiu do app)
+  const alta = conta(h => h.lido && h.ultimaLeitura >= seteDias);
   const periodos = { geradoEm: Date.now(), mesRef, alta: await top(alta, 10), semana: await top(semana, 10), mes: await top(mes, 10) };
   await db.collection("ranking").doc("periodos").set(periodos);
 

@@ -236,6 +236,7 @@ function startSync(uid) {
   extraUnsubs.push(onSnapshot(doc(db, "users", uid, "config", "forum"), (d) => { forumDnd = !!(d.exists() && (d.data() || {}).dnd); updateBell(); }, () => {}));
   try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
   limparLixeira(uid);
+  carregarAnimes();
   render();
   talvezTutorial(uid);
   const slowT = setTimeout(() => {
@@ -461,14 +462,29 @@ function limpaSinopse(s) {
     .replace(/\((Source|Fonte)[^)]*\)/gi, "").replace(/\[Written by[^\]]*\]/gi, "").replace(/__|\*\*/g, "")
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500);
 }
+// ---------- anime: o AniList liga cada mangá às adaptações em anime ----------
+const ANIME_CAMPOS = `relations{edges{relationType node{id idMal type format status title{romaji english} startDate{year month} episodes studios(isMain:true){nodes{name}}}}}`;
+function animeDe(m) {
+  const ns = ((m && m.relations && m.relations.edges) || []).filter(e => e.relationType === "ADAPTATION" && e.node && e.node.type === "ANIME" && e.node.format !== "MUSIC").map(e => e.node);
+  if (!ns.length) return null;
+  const prox = ns.find(n => n.status === "NOT_YET_RELEASED"), exib = ns.find(n => n.status === "RELEASING");
+  const ref = prox || exib || ns.slice().sort((a, b) => ((b.startDate || {}).year || 0) - ((a.startDate || {}).year || 0))[0];
+  const sd = ref.startDate || {};
+  return { st: prox ? "anunciado" : exib ? "exibicao" : "finalizado", id: ref.id, mal: ref.idMal || null,
+    titulo: (ref.title && (ref.title.english || ref.title.romaji)) || "", ano: sd.year || null, mes: sd.month || null,
+    estudio: ((ref.studios && ref.studios.nodes) || []).map(x => x.name).slice(0, 2).join(", "), eps: ref.episodes || null,
+    temporadas: ns.filter(n => ["TV", "TV_SHORT", "ONA"].includes(n.format)).length };
+}
+const tagAnime = (a) => !a ? "" : a.st === "anunciado" ? `<span class="atag novo">Anime anunciado</span>` : `<span class="atag">Tem anime</span>`;
 async function buscaAniList(q) {
-  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format}}}`;
+  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year} ${ANIME_CAMPOS}}}}`;
   const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
   return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.format !== "NOVEL").map(m => ({
     key: m.idMal ? "mal" + m.idMal : "al" + m.id, alId: m.id, malId: m.idMal || null,
     original: (m.title.romaji || m.title.english || "").trim(), ingles: (m.title.english || "").trim(),
     capa: (m.coverImage && m.coverImage.large) || "", generos: generosPT(m.genres), desc: m.description || "",
     tipo: TIPO[m.countryOfOrigin] || "Mangá", sinonimos: (m.synonyms || []).filter(x => typeof x === "string"),
+    nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null, anime: animeDe(m),
   }));
 }
 async function buscaMAL(q) {
@@ -597,7 +613,7 @@ function montarBuscaCatalogo(root, inicial, aoEscolher) {
     res.innerHTML = lista.length ? lista.map((r, i) => `
       <button type="button" class="catitem" data-i="${i}">
         ${r.capa ? `<img src="${esc(r.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
-        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
+        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em>${r.anime ? `<span class="atags">${tagAnime(r.anime)}</span>` : ""}</span>
       </button>`).join("") + `<div class="hint">Não achou? Preencha manualmente abaixo.</div>`
       : `<div class="hint">Nada encontrado no catálogo. Você pode preencher manualmente abaixo.</div>`;
     res.querySelectorAll("[data-i]").forEach(b => b.onclick = async () => {
@@ -660,7 +676,7 @@ function cardHTML(it) {
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
     : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
+    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button>${visit ? "" : seloAnime(it)}</div>
     <div class="body">
       <div class="title" title="${esc(it.title)}${it.titulo2 ? " — " + esc(it.titulo2) : ""}"><span class="t1">${esc(it.title)}</span>${it.titulo2 ? `<span class="t2">${esc(it.titulo2)}</span>` : ""}</div>
       ${chap}
@@ -668,8 +684,60 @@ function cardHTML(it) {
     </div>
   </article>`;
 }
+// ---------- anime das obras da estante (confere 1x por dia; novas obras na hora) ----------
+let animeInfo = {}, animeEm = 0, animeT = null;
+const ANIME_KEY = () => "estante-anime-v1-" + (currentUser ? currentUser.uid : "");
+const AVISO_ANIME_KEY = () => "estante-anime-avisos-v1-" + (currentUser ? currentUser.uid : "");
+function lerJSON(k, d) { try { return JSON.parse(localStorage.getItem(k) || "null") || d; } catch (e) { return d; } }
+function salvarJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function carregarAnimes() { const c = lerJSON(ANIME_KEY(), {}); animeInfo = c.info || {}; animeEm = c.em || 0; }
+function seloAnime(it) {
+  const a = it.catId && animeInfo[it.catId]; if (!a) return "";
+  const visto = (lerJSON(AVISO_ANIME_KEY(), {}).vistos || {})[it.catId + ":" + a.id];
+  return a.st === "anunciado" && !visto ? `<span class="aselo novo">Anime anunciado</span>` : `<span class="aselo">Anime</span>`;
+}
+function marcarAnimeVisto(it) {
+  const a = it && it.catId && animeInfo[it.catId]; if (!a || a.st !== "anunciado") return;
+  const av = lerJSON(AVISO_ANIME_KEY(), {}); av.vistos = av.vistos || {};
+  if (av.vistos[it.catId + ":" + a.id]) return;
+  av.vistos[it.catId + ":" + a.id] = Date.now(); salvarJSON(AVISO_ANIME_KEY(), av); render();
+}
+function agendaAnimes() { clearTimeout(animeT); animeT = setTimeout(atualizarAnimes, 4000); }
+async function atualizarAnimes() {
+  if (!currentUser || !navigator.onLine) return;
+  const cats = [...new Set([...items.values()].map(it => it.catId).filter(k => /^(al|mal)\d+$/.test(k || "")))];
+  const velho = Date.now() - animeEm > 20 * 3600e3;
+  const faltam = velho ? cats : cats.filter(k => !(k in animeInfo));
+  if (!faltam.length) return;
+  const novo = velho ? {} : { ...animeInfo };
+  for (let i = 0; i < faltam.length; i += 50) {
+    const lote = faltam.slice(i, i + 50), mal = lote.filter(k => k.startsWith("mal")).map(k => +k.slice(3)), al = lote.filter(k => k.startsWith("al")).map(k => +k.slice(2));
+    try {
+      const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ query: `query($m:[Int],$a:[Int]){m:Page(perPage:50){media(idMal_in:$m,type:MANGA){id idMal ${ANIME_CAMPOS}}} a:Page(perPage:50){media(id_in:$a,type:MANGA){id idMal ${ANIME_CAMPOS}}}}`, variables: { m: mal.length ? mal : [0], a: al.length ? al : [0] } }) });
+      lote.forEach(k => { novo[k] = null; });
+      const d = j && j.data;
+      ((d && d.m && d.m.media) || []).forEach(m => { novo["mal" + m.idMal] = animeDe(m); });
+      ((d && d.a && d.a.media) || []).forEach(m => { novo["al" + m.id] = animeDe(m); });
+    } catch (e) { return; }
+  }
+  animeInfo = novo; animeEm = velho ? Date.now() : animeEm || Date.now();
+  salvarJSON(ANIME_KEY(), { info: animeInfo, em: animeEm });
+  // aviso no sino: uma vez por anime anunciado de cada obra da estante
+  const av = lerJSON(AVISO_ANIME_KEY(), {}); av.avisados = av.avisados || {}; av.lista = av.lista || [];
+  let mudou = false;
+  for (const it of items.values()) {
+    const a = it.catId && animeInfo[it.catId]; if (!a || a.st !== "anunciado") continue;
+    const k = it.catId + ":" + a.id; if (av.avisados[k]) continue;
+    av.avisados[k] = Date.now(); av.lista.unshift({ key: "anime:" + k, mid: it.id, titulo: it.title, em: Date.now() }); mudou = true;
+  }
+  av.lista = av.lista.slice(0, 50);
+  salvarJSON(AVISO_ANIME_KEY(), av);
+  render(); if (mudou) updateBell();
+}
 function render() {
   if (!currentUser) return;
+  if (!ui.visit) agendaAnimes();
   renderChips();
   $("#visitBar").classList.toggle("hidden", !ui.visit);
   if (ui.visit) { $("#visitName").textContent = "@" + ui.visit.apelido; $("#visitAv").innerHTML = avatarHTML(ui.visit.foto, ui.visit.apelido); }
@@ -1129,36 +1197,84 @@ function novasAvaliacoes() {
   }
   return out.sort((a, b) => (b.v.em || 0) - (a.v.em || 0));
 }
-function updateBell() {
-  if (!$("#bellBtn")) return;
-  const n = bellList().length + novasAvaliacoes().length + (forumDnd ? 0 : myAvisos.length);
-  $("#bellBtn").classList.toggle("hidden", !n);
-  $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
+// Notificações ficam numa lista local: tocar marca como lida (sem sumir); "Limpar" esvazia (com Desfazer por 5 s)
+const NOTIF_KEY = () => "estante-notif-v1-" + (currentUser ? currentUser.uid : "");
+function juntarNotifs() {
+  const L = lerJSON(NOTIF_KEY(), {}); L.itens = L.itens || []; L.limpas = L.limpas || [];
+  const limpas = new Set(L.limpas);
+  const tem = new Map(L.itens.map(x => [x.key, x])), agora = Date.now();
+  const por = (x) => { if (tem.has(x.key)) { Object.assign(tem.get(x.key), { titulo: x.titulo, texto: x.texto, capa: x.capa, link: x.link }); return; } if (limpas.has(x.key)) return; const n = { ...x, em: x.em || agora, lida: false }; L.itens.push(n); tem.set(x.key, n); };
+  for (const { it, n } of bellList()) {
+    const c = chk[it.id];
+    por({ key: "cap:" + it.id + ":" + c.latest, tipo: "cap", mid: it.id, titulo: it.title, capa: safeCover(it.cover) || "", link: fixLink(it.link) || "", texto: `+${n} ${n === 1 ? "capítulo novo" : "capítulos novos"} · você parou no ${fmtCap(it.chapter)}` });
+  }
+  for (const { it, v } of novasAvaliacoes()) por({ key: "aval:" + it.id + ":" + (v.uid || v.apelido) + ":" + (v.em || 0), tipo: "aval", mid: it.id, titulo: it.title, capa: safeCover(it.cover) || "", em: v.em, texto: `@${v.apelido || "?"} deu nota ${fmtNota(parseNota(v.nota))}` });
+  if (!forumDnd) for (const f of myAvisos.slice(0, 30)) por({ key: "forum:" + f.id, tipo: "forum", aviso: f.id, sala: f.sala, em: f.em, titulo: `@${f.apelido || "?"} ${f.tipo === "resposta" ? "respondeu você" : "mencionou você"}`, texto: `em ${nomeSala(f.sala)}${f.trecho ? " · " + f.trecho : ""}` });
+  for (const x of (lerJSON(AVISO_ANIME_KEY(), {}).lista || [])) { const it = items.get(x.mid); por({ key: x.key, tipo: "anime", mid: x.mid, titulo: x.titulo, capa: it ? safeCover(it.cover) || "" : "", em: x.em, texto: "vai ganhar anime" }); }
+  // capítulo já lido: a notificação continua, mas como lida
+  for (const x of L.itens) if (x.tipo === "cap" && !x.lida) { const it = items.get(x.mid); if (!it || !unreadBadge(it)) x.lida = true; }
+  L.itens = L.itens.filter(x => agora - (x.em || 0) < 30 * 864e5).sort((p, q) => (q.em || 0) - (p.em || 0)).slice(0, 60);
+  salvarJSON(NOTIF_KEY(), L);
+  return L;
 }
+function updateBell() {
+  if (!$("#bellBtn") || !currentUser) return;
+  const n = juntarNotifs().itens.filter(x => !x.lida).length;
+  $("#bellBtn").classList.remove("hidden");
+  $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
+  $("#bellCnt").classList.toggle("hidden", !n);
+}
+let bellDesfazer = null;
 function openBell() {
-  const caps = bellList(), avs = novasAvaliacoes(), fav = forumDnd ? [] : myAvisos.slice(0, 30);
-  openModal(`
-    <div class="mhead"><h2>🔔 Novidades</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody">
-      ${fav.length ? `<div class="secth">Fórum</div><div class="menu-list">${fav.map(a => `
-        <button class="acct pbtn" data-fsala="${esc(a.sala)}"><div><b>@${esc(a.apelido || "?")} ${a.tipo === "resposta" ? "respondeu você" : "mencionou você"} em ${esc(nomeSala(a.sala))}</b><small>${esc(a.trecho || "")}</small></div></button>`).join("")}</div>` : ""}
-      ${avs.length ? `<div class="secth">Avaliações novas</div><div class="menu-list">${avs.map(({ it, v }) => `
-        <button class="acct pbtn" data-info="${esc(it.id)}"><div><b>@${esc(v.apelido || "?")} deu ⭐ ${fmtNota(parseNota(v.nota))}</b><small>em ${esc(it.title)}</small></div></button>`).join("")}</div>` : ""}
-      ${caps.length ? `<div class="secth">Capítulos novos</div><div class="menu-list">${caps.map(({ it, n }) => `
-        <div class="acct" style="justify-content:space-between">
-          <div><b>${esc(it.title)}</b><small>+${n} ${n === 1 ? "capítulo novo" : "capítulos novos"} · você parou no ${fmtCap(it.chapter)}</small></div>
-          ${fixLink(it.link) ? `<a class="mini read" data-seen="${esc(it.id)}" href="${esc(fixLink(it.link))}" target="_blank" rel="noopener noreferrer">Ler ↗</a>` : ""}
-        </div>`).join("")}</div>` : ""}
-      ${!avs.length && !caps.length && !fav.length ? `<p class="hint">Nenhuma novidade por enquanto.</p>` : ""}
-    </div>`, (root) => {
+  let L = juntarNotifs(), guarda = null, tmr = null;
+  const marcar = (key) => { const x = L.itens.find(y => y.key === key); if (x && !x.lida) { x.lida = true; salvarJSON(NOTIF_KEY(), L); updateBell(); } };
+  const efetivar = (lista) => {   // depois dos 5 s: limpa também na origem
+    lista.forEach(x => { if (x.tipo === "cap") markSeen(x.mid); });
     try { localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
+    const fs = lista.filter(x => x.tipo === "forum" && x.aviso);
+    if (fs.length) { const bt = writeBatch(db); fs.forEach(x => bt.delete(doc(db, "users", currentUser.uid, "avisos", x.aviso))); bt.commit().catch(() => {}); }
+    const av = lerJSON(AVISO_ANIME_KEY(), {}); av.lista = []; salvarJSON(AVISO_ANIME_KEY(), av);
+    updateBell();
+  };
+  openModal(`
+    <div class="mhead"><h2>Notificações</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><div class="ntabs"><span class="lbl">Novidades</span><span class="qt" id="nQt"></span><button type="button" class="nlimpar" id="nLimpar">Limpar</button></div><div class="nlist" id="nList"></div></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
-    root.querySelectorAll("[data-info]").forEach(b => b.onclick = () => openInfo(b.dataset.info));
-    root.querySelectorAll("[data-fsala]").forEach(b => b.onclick = () => { forumEstado.sala = b.dataset.fsala; openPeople("forum"); });
-    // avisos do fórum vistos: saem do sino
-    if (fav.length) { const bt = writeBatch(db); fav.forEach(a => bt.delete(doc(db, "users", currentUser.uid, "avisos", a.id))); bt.commit().catch(() => {}); }
-    root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => { markSeen(a.dataset.seen); setTimeout(() => { if (!bellList().length) closeModal(); else openBell(); }, 350); }));
-    return () => updateBell();
+    const box = root.querySelector("#nList"), bLimpar = root.querySelector("#nLimpar"), qt = root.querySelector("#nQt");
+    const capa = (x) => x.capa ? `<img src="${esc(x.capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="ncapa-v">${x.tipo === "forum" ? "@" : esc((x.titulo || "?").trim().charAt(0).toUpperCase())}</span>`;
+    const draw = () => {
+      qt.textContent = String(L.itens.length); qt.classList.toggle("hidden", !L.itens.length); bLimpar.disabled = !L.itens.length;
+      box.innerHTML = (L.itens.length ? L.itens.map(x => `
+        <div class="ni${x.lida ? " lida" : ""}" data-k="${esc(x.key)}" role="button" tabindex="0">
+          <span class="ncapa">${capa(x)}</span>
+          <span class="nt"><b>${esc(x.titulo || "")}</b><small>${esc(x.texto || "")}</small></span>
+          ${x.tipo === "cap" && x.link ? `<a class="mini read" data-ler href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">Ler</a>` : ""}
+          <span class="ndot"></span>
+        </div>`).join("") : `<div class="nvazio">Nenhuma notificação nova.</div>`)
+        + (guarda ? `<div class="ntoast">Notificações limpas.<button type="button" id="nDesf">Desfazer</button></div>` : "");
+    };
+    draw();
+    box.addEventListener("click", (e) => {
+      if (e.target.id === "nDesf") { const ks = new Set(guarda.map(x => x.key)); L.limpas = L.limpas.filter(k => !ks.has(k)); L.itens = guarda; guarda = null; clearTimeout(tmr); bellDesfazer = null; salvarJSON(NOTIF_KEY(), L); updateBell(); draw(); return; }
+      const el = e.target.closest(".ni"); if (!el) return;
+      const x = L.itens.find(y => y.key === el.dataset.k); if (!x) return;
+      marcar(x.key);
+      if (e.target.closest("[data-ler]")) { markSeen(x.mid); draw(); return; }
+      if (x.tipo === "forum") { forumEstado.sala = x.sala; openPeople("forum"); return; }
+      if (x.mid && items.get(x.mid)) { openInfo(x.mid); return; }
+      draw();
+    });
+    bLimpar.onclick = () => {
+      if (!L.itens.length) return;
+      box.querySelectorAll(".ni").forEach(n => n.classList.add("sai"));
+      setTimeout(() => {
+        guarda = L.itens; L.itens = []; L.limpas = [...guarda.map(x => x.key), ...L.limpas].slice(0, 300); salvarJSON(NOTIF_KEY(), L); updateBell(); draw();
+        clearTimeout(tmr); const lista = guarda;
+        bellDesfazer = () => efetivar(lista);
+        tmr = setTimeout(() => { guarda = null; bellDesfazer = null; efetivar(lista); if (box.isConnected) draw(); }, 5000);
+      }, 220);
+    };
+    return () => { if (bellDesfazer) { clearTimeout(tmr); const f = bellDesfazer; bellDesfazer = null; f(); } updateBell(); };
   });
 }
 
@@ -1301,6 +1417,7 @@ function alertaFinal() {
 function avalsOf(mid) { return ui.visit ? (ui.visit.avals[mid] || {}) : (myAvals[mid] || {}); }
 function openInfo(mid) {
   const visit = ui.visit, it = source().get(mid); if (!it) return;
+  if (!visit) marcarAnimeVisto(it);
   const nota = parseNota(it.nota), lk = fixLink(it.link);
   const me = currentUser.uid, avals = avalsOf(mid);
   const lista = Object.entries(avals).map(([uid, v]) => ({ uid, ...v })).filter(v => parseNota(v.nota)).sort((a, b) => (b.em || 0) - (a.em || 0));
@@ -1582,7 +1699,7 @@ function montarPessoas(root) {
   plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
 }
 // ---------- Ranking: Todos os tempos · Em alta · Esta semana · Este mês · Por gênero · Para você ----------
-const RK_FILTROS = [["todos", "Todos os tempos"], ["alta", "Em alta"], ["semana", "Esta semana"], ["mes", "Este mês"], ["genero", "Por gênero"], ["pv", "✨ Para você"]];
+const RK_FILTROS = [["todos", "Todos os tempos"], ["alta", "Em alta"], ["mes", "Este mês"], ["genero", "Por gênero"], ["pv", "✨ Para você"]];
 const rkEstado = { f: "todos", barra: 0, g: "Ação", gbarra: 0 };
 const RK_GENEROS = ["Ação", "Romance", "Fantasia", "Comédia", "Drama", "Esportes", "Mistério", "Terror"];   // continua onde você parou ao voltar para o Ranking
 const rkPC = () => matchMedia("(min-width:1100px)").matches;
@@ -1686,7 +1803,7 @@ const MESES_CAP = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "
 function desenharPeriodo(area, d, f) {
   const p = d.periodos || {};
   const agora = new Date();
-  const cap = { alta: "O que mais cresceu nos últimos 7 dias · atualiza todo dia", semana: "De segunda até hoje · atualiza todo dia",
+  const cap = { alta: "Os mais lidos dos últimos 7 dias · atualiza todo dia", semana: "De segunda até hoje · atualiza todo dia",
     mes: `${MESES_CAP[agora.getMonth()]} de ${agora.getFullYear()} até hoje · atualiza todo dia` }[f];
   const lista = p[f] || [];
   area.innerHTML = `<p class="rkcap">${cap}</p>${lista.length ? rkGrade(lista) : `<p class="rkvazio">Ainda não tem leituras neste período.</p>`}`;
@@ -1778,6 +1895,85 @@ async function adicionarObra(x, btn) {
   // troca o "+ Estante" dessa obra em todo lugar que estiver aparecendo
   document.querySelectorAll("[data-add]").forEach(b => { let y = {}; try { y = JSON.parse(b.dataset.add); } catch (e) {}
     if (b === btn || (y.chave && y.chave === x.chave)) { const s = document.createElement("span"); s.className = "mini rktem"; s.textContent = "✓ Na sua estante"; b.replaceWith(s); } });
+}
+
+// ---------- Lupa: busca geral no catálogo (nomes em inglês, japonês, português, coreano e chinês) ----------
+async function buscaGeral(q) {
+  const [al, md] = await Promise.all([buscaAniList(q).catch(() => []),
+    httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(q)}&contentRating[]=safe&contentRating[]=suggestive`).catch(() => null)]);
+  let r = al.slice();
+  // o MangaDex conhece nomes em português e variações que o AniList não tem: traz essas obras pelo id do AniList
+  const extra = (((md && md.data) || []).map(m => { const l = (m.attributes && m.attributes.links) || {}; const alts = (m.attributes && m.attributes.altTitles) || [];
+    const pt = alts.find(t => t["pt-br"]); return { al: +l.al || 0, pt: pt ? pt["pt-br"] : "", nomes: [...Object.values(m.attributes.title || {}), ...alts.flatMap(t => Object.values(t))] }; }))
+    .filter(x => x.al);
+  const faltam = extra.filter(x => !r.some(y => y.alId === x.al)).map(x => x.al).slice(0, 10);
+  if (faltam.length) {
+    try {
+      const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ query: `query($a:[Int]){Page(perPage:10){media(id_in:$a,type:MANGA,isAdult:false){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year} ${ANIME_CAMPOS}}}}`, variables: { a: faltam } }) });
+      const ms = ((j && j.data && j.data.Page && j.data.Page.media) || []);
+      for (const m of ms) r.push({ ...rDeAniList(m), nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null, anime: animeDe(m) });
+    } catch (e) {}
+  }
+  r.forEach(x => { const e = extra.find(y => y.al === x.alId); if (e) { x.nomePT = e.pt; x.outros = e.nomes; } });
+  if (!r.length) { try { r = await buscaMAL(q); } catch (e) {} }
+  return r.filter(x => !nomeSuspeito(x.original) && !nomeSuspeito(x.ingles || ""));
+}
+function nomeQueBateu(r, q) {   // quando a busca achou por outro nome (ex.: o nome em português), mostra qual
+  const nq = norm(q), vistos = [r.ingles, r.original].map(norm);
+  const todos = [r.nomePT, r.nativo, ...(r.sinonimos || []), ...(r.outros || [])].filter(Boolean);
+  return todos.find(n => norm(n).includes(nq) && !vistos.includes(norm(n))) || "";
+}
+function openLupa() {
+  openModal(`
+    <div class="mhead"><h2>Buscar</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody lupa">
+      <div class="lupaq"><input id="lpQ" type="search" placeholder="Nome do mangá, manhwa ou manhua…" autocomplete="off" enterkeyhint="search"></div>
+      <div class="lpres" id="lpRes"><p class="hint">Procura no catálogo inteiro, por qualquer nome: inglês, japonês, português, coreano ou chinês.</p></div>
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const inp = root.querySelector("#lpQ"), box = root.querySelector("#lpRes");
+    let t = null, seq = 0, lista = [];
+    setTimeout(() => inp.focus(), 60);
+    const draw = (q) => {
+      box.innerHTML = lista.length ? lista.map((r, i) => {
+        const nome = r.ingles || r.original, outro = [r.original, r.ingles, r.nativo].find(n => n && norm(n) !== norm(nome)) || "";
+        const bateu = nomeQueBateu(r, q), x = { chave: r.key, catId: r.key, titulo: nome, capa: r.capa };
+        return `<div class="lpitem" data-i="${i}" role="button" tabindex="0">
+          ${r.capa ? `<img src="${esc(r.capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
+          <span class="ct"><b>${esc(nome)}</b>${outro ? `<small>${esc(outro)}</small>` : ""}${bateu ? `<small class="bateu">Também conhecido como ${esc(bateu)}</small>` : ""}
+            <em>${esc(r.tipo || "Mangá")}${r.ano ? " · " + r.ano : ""}${(r.generos || []).length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em>${r.anime ? `<span class="atags">${tagAnime(r.anime)}</span>` : ""}</span>
+          ${naEstante(x) ? `<span class="mini rktem">✓ Na estante</span>` : `<button type="button" class="mini read" data-lpadd="${i}">+ Estante</button>`}
+        </div>`;
+      }).join("") : `<p class="hint">Nada encontrado com esse nome. Tente outro nome ou parte dele.</p>`;
+    };
+    const buscar = async () => {
+      const q = inp.value.trim(); clearTimeout(t);
+      if (q.length < 2) { box.innerHTML = `<p class="hint">Procura no catálogo inteiro, por qualquer nome: inglês, japonês, português, coreano ou chinês.</p>`; return; }
+      const meu = ++seq; box.innerHTML = `<p class="hint">Buscando…</p>`;
+      const r = await buscaGeral(q).catch(() => []);
+      if (meu !== seq || !box.isConnected) return;
+      lista = r; draw(q);
+    };
+    inp.addEventListener("input", () => { clearTimeout(t); t = setTimeout(buscar, 450); });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
+    box.addEventListener("click", async (e) => {
+      const add = e.target.closest("[data-lpadd]");
+      const el = e.target.closest(".lpitem"); if (!el) return;
+      const r = lista[+el.dataset.i]; if (!r) return;
+      const nome = r.ingles || r.original;
+      const x = { chave: r.key, catId: r.key, titulo: nome, capa: r.capa };
+      if (add) {
+        add.disabled = true; add.textContent = "Adicionando…";
+        try { await prepararCatalogo(r); } catch (er) {}
+        await adicionarObra(x, null);
+        const s2 = document.createElement("span"); s2.className = "mini rktem"; s2.textContent = "✓ Na estante"; add.replaceWith(s2);
+        return;
+      }
+      try { await prepararCatalogo(r); } catch (er) {}
+      openObra(x);
+    });
+  });
 }
 
 // ---------- Para você: 10 sugestões; "Não me interessa" troca por outra ----------
@@ -2211,7 +2407,7 @@ function iniciarTutorial(rever) {
     { alvo: () => cardDoExemplo(), t: "Seu card de leitura", icones: true,
       ul: [tic("−") + "volta um capítulo", tic("+", "pl") + "avança um capítulo", tic("1", "num") + "toque no número para digitar o capítulo", tic("Ler ↗", "ler") + "abre o site onde você lê",
         tic("i", "inf") + "detalhes, sinopse e sua nota", tic("✎") + "edita o mangá", tic(ICO_TUT) + "deixa este mangá privado: só você vê, mesmo com perfil público"] },
-    { alvo: () => $("#bellBtn"), mostraSino: true, t: "Novidades", p: "O sino avisa quando sai capítulo novo e quando alguém menciona você no fórum." },
+    { alvo: () => $("#bellBtn"), mostraSino: true, t: "Novidades", p: "O sino avisa capítulo novo, menção no fórum e anime anunciado. “Limpar” esvazia a lista." },
     { alvo: () => $("#peopleBtn"), t: "Social", ul: ["<b>Meu perfil</b>: sua vitrine, foto e favoritos", "<b>Comunidade</b>: visite estantes de outros leitores", "<b>Ranking</b> e <b>Fórum</b>"] },
     { alvo: () => $("#peopleBtn"), t: "Sua estante pública", p: "Sua estante é pública: outros leitores podem visitá-la e se inspirar. Prefere só para você? Em Social › Meu perfil, feche o perfil quando quiser." },
     { alvo: () => $("#menuBtn"), t: "Menu", p: "Toque no ☰ para abrir o menu.",
@@ -2303,9 +2499,11 @@ const GUIA = [
   ["Nota e comentário", "nota", "<ol><li>No editor, dê uma nota de 0 a 10 e escreva um comentário curto.</li><li>As notas entram no ranking “Os mais bem avaliados”.</li></ol>"],
   ["Link e capítulo novo", "sino", "<ol><li>Coloque no editor o link do site onde você lê.</li><li>O app confere o site e o sino avisa quando sai capítulo novo.</li></ol>"],
   ["Catálogo", "info", "<ol><li>Ao escolher a obra no catálogo, vêm capa, nomes, gêneros e sinopse.</li><li>Toque no <b>ⓘ</b> do card para ver tudo.</li></ol>"],
+  ["Buscar no catálogo", "adicionar", "<ol><li>Toque na <b>lupa</b> ao lado do sino.</li><li>Busque por qualquer nome: inglês, japonês, português, coreano ou chinês.</li><li>Toque na obra para ver detalhes ou em <b>+ Estante</b> para adicionar.</li></ol>"],
+  ["Anime anunciado", "card", "<ol><li>O selo amarelo <b>Anime anunciado</b> aparece na capa quando sai o anúncio, e o sino avisa.</li><li>Depois que você abre o mangá, vira o selo escuro <b>Anime</b>.</li></ol>"],
   ["Vitrine e foto de perfil", "perfil", "<ol><li>Em Social › <b>Meu perfil</b>, toque em Editar vitrine.</li><li>Escolha capa (imagem ou GIF), cor, bio e até 3 favoritos.</li></ol>"],
   ["Comunidade e visitas", "comunidade", "<ol><li>Em Social › <b>Comunidade</b>, veja os leitores.</li><li>Toque em alguém para visitar a estante e adicionar mangás dela à sua.</li></ol>"],
-  ["Ranking", "ranking", "<ol><li>Em Social › <b>Ranking</b>: Todos os tempos, Em alta, Esta semana, Este mês e Por gênero.</li><li><b>Para você</b> traz sugestões pelo que você lê.</li></ol>"],
+  ["Ranking", "ranking", "<ol><li>Em Social › <b>Ranking</b>: Todos os tempos, Em alta (os mais lidos em 7 dias), Este mês e Por gênero.</li><li><b>Para você</b> traz sugestões pelo que você lê.</li></ol>"],
   ["Privacidade", "privacidade", "<ol><li>O ícone de mangá no card deixa aquele mangá privado: só você vê.</li><li>Em Meu perfil, escolha estante pública ou fechada.</li></ol>"],
   ["Fórum e regras", "forum", "<ol><li>Em Social › <b>Fórum</b>: salas Geral, Recomendações e Spoilers.</li><li>Use Spoiler para cobrir revelações. As mensagens somem em 7 dias.</li></ol>"],
   ["Aparência", "aparencia", "<ol><li>No botão de quadradinhos ao lado dos filtros.</li><li>Escolha cards por linha, tamanho do texto, tema e a abertura do app.</li></ol>"],
@@ -3054,6 +3252,7 @@ $("#aparBtn").addEventListener("click", openAparencia);
   ajusta(); (mq.addEventListener ? mq.addEventListener("change", ajusta) : mq.addListener(ajusta));
 })();
 $("#bellBtn").addEventListener("click", openBell);
+$("#lupaBtn").addEventListener("click", openLupa);
 $("#visitBack").addEventListener("click", closeVisit);
 window.addEventListener("beforeunload", (e) => { if (pending.size) { for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } } });
 document.addEventListener("visibilitychange", () => { if (document.hidden) for (const id of [...pending.keys()]) { clearTimeout(pending.get(id)); flush(id); } else render(); });
