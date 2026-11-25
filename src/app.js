@@ -29,6 +29,7 @@ let items = new Map();          // id -> mangá
 const pending = new Map();      // id -> timer (alterações ainda não enviadas)
 let col = null, colPriv = null, unsub = null, unsubPriv = null, loaded = false, currentUser = null;
 let snapPub = new Map(), snapPriv = new Map();
+const movendo = new Map();   // mangás trocando entre visível e privado: ficam na tela até o servidor confirmar
 let netState = { pendingWrites: false, fromCache: true };
 let savedSort = "recent"; try { savedSort = localStorage.getItem("estante-sort") || "recent"; } catch (e) {}
 const ui = { filter: "todos", q: "", sort: savedSort, visit: null };   // visit = estante de outra pessoa aberta
@@ -238,6 +239,10 @@ function startSync(uid) {
     const next = new Map();
     snapPub.forEach((v, k) => next.set(k, v));
     snapPriv.forEach((v, k) => next.set(k, v));
+    for (const [id, it] of movendo) {
+      const chegou = it.privado ? (snapPriv.has(id) && !snapPub.has(id)) : (snapPub.has(id) && !snapPriv.has(id));
+      if (chegou) movendo.delete(id); else next.set(id, it);
+    }
     for (const id of pending.keys()) { if (items.has(id)) next.set(id, items.get(id)); else next.delete(id); }
     items = next;
   };
@@ -312,12 +317,12 @@ function trocarPrivado(id, privado) {
   clearTimeout(pending.get(id)); pending.delete(id);
   const novo = { ...it, privado: !!privado, updatedAt: Date.now() };
   if (!privado) delete novo.privado;
-  items.set(id, novo); render();
+  items.set(id, novo); movendo.set(id, novo); render();
   const b = writeBatch(db);
   b.set(doc(privado ? colPriv : col, id), strip(novo));
   b.delete(doc(privado ? col : colPriv, id));
   b.commit().then(() => toast(privado ? "Privado: só você vê este mangá." : "Visível: aparece na sua estante pública.", 2600))
-    .catch(() => toast("Não foi possível mudar agora. Verifique a internet.", 3500));
+    .catch(() => { movendo.delete(id); toast("Não foi possível mudar agora. Verifique a internet.", 3500); });
 }
 function commit(id, patch) {
   const old = items.get(id); if (!old) return;
@@ -600,6 +605,7 @@ function montarBuscaCatalogo(root, inicial, aoEscolher) {
 }
 
 // ---------- renderização ----------
+const cardsHTML = new WeakMap();   // guarda o HTML de cada card para só redesenhar o que mudou
 const source = () => ui.visit ? ui.visit.items : items;
 function filtered() {
   const q = norm(ui.q);
@@ -643,7 +649,7 @@ function cardHTML(it) {
       </div>`;
   const foot = visit
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
-    : `<div class="foot"><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
+    : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
     <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
@@ -667,8 +673,27 @@ function render() {
   const grid = $("#grid"), empty = $("#empty");
   if (!loaded || (ui.visit && ui.visit.loading)) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando estante…</div>`; return; }
   const arr = filtered();
-  grid.innerHTML = arr.map(cardHTML).join("");
-  grid.querySelectorAll("img[data-fallback]").forEach(img => img.addEventListener("error", () => {
+  const antigos = new Map([...grid.children].map(el => [el.dataset.id, el]));
+  const novos = [], els = [];
+  for (const it of arr) {
+    const html = cardHTML(it); let el = antigos.get(it.id);
+    if (!el || cardsHTML.get(el) !== html) {
+      const t = document.createElement("template"); t.innerHTML = html.trim();
+      const novo = t.content.firstElementChild;
+      if (!el) novo.classList.add("entra");          // animação só para card que acabou de aparecer
+      // aproveita a imagem da capa já carregada (não pisca)
+      if (el) { const vi = el.querySelector(".cover img"), ni = novo.querySelector(".cover img"); if (vi && ni && vi.getAttribute("src") === ni.getAttribute("src")) ni.replaceWith(vi); }
+      // a capa que já tinha falhado continua no modo reserva, sem recarregar
+      if (el && el.querySelector('[data-act="warnimg"]')) { const ci = novo.querySelector("img[data-fallback]"); if (ci) { ci.outerHTML = phHTML(it.title); novo.querySelector(".cover").insertAdjacentHTML("beforeend", `<button type="button" class="cwarn img" data-act="warnimg" title="A imagem desta capa não abriu">⚠️</button>`); } }
+      cardsHTML.set(novo, html); el = novo; novos.push(novo);
+    }
+    els.push(el);
+  }
+  // só mexe na ordem/quantidade quando mudou
+  const mesmaOrdem = els.length === grid.children.length && els.every((e, i) => grid.children[i] === e);
+  if (!mesmaOrdem) grid.replaceChildren(...els);
+  novos.forEach(n => n.addEventListener("animationend", () => n.classList.remove("entra"), { once: true }));
+  novos.flatMap(n => [...n.querySelectorAll("img[data-fallback]")]).forEach(img => img.addEventListener("error", () => {
     const card = img.closest(".card"); const it = card && source().get(card.dataset.id);
     const cov = img.parentElement;
     img.outerHTML = phHTML(it ? it.title : "?");

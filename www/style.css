@@ -50,7 +50,8 @@
   main{max-width:1200px;margin:0 auto;padding:18px 16px 110px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:20px}
   @media (max-width:520px){ .grid{grid-template-columns:repeat(2,1fr);gap:14px} .logo{font-size:25px} .sync .txt{display:none} }
-  .card{background:var(--card);border:var(--line);border-radius:6px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;animation:pop .25s ease both}
+  .card{background:var(--card);border:var(--line);border-radius:6px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .card.entra{animation:pop .25s ease both}
   @keyframes pop{from{opacity:0;transform:translateY(6px)}}
   .cover{aspect-ratio:3/4;position:relative;border-bottom:var(--line);background:var(--soft);overflow:hidden;cursor:pointer}
   .cover img{width:100%;height:100%;object-fit:cover;display:block}
@@ -567,3 +568,6 @@ label.chk span{display:inline-flex;align-items:center;gap:6px}
 .cover.borrado::after{content:"18+ · toque para ver";position:absolute;inset:auto 8px 50% 8px;transform:translateY(50%);text-align:center;font-weight:900;font-size:12px;background:var(--ink);color:var(--card);border-radius:8px;padding:6px 4px;z-index:2}
 .cover{overflow:hidden}
 .borrado18 img{filter:blur(10px) saturate(.6)}
+
+/* "lido há X dias": só no PC */
+@media (max-width:520px){ .foot .when{display:none} }
