@@ -546,3 +546,24 @@ html.dens-alta .chap [data-act="minus"]{display:none}
 html.dens-alta .chap .num{border-left:0;padding:2px 0}
 html.dens-alta .chap .num b{font-size:12px}
 html.dens-alta .chap button{width:16px;font-size:12px}
+
+/* ---------- privado e classificação ---------- */
+.foot .grow{flex:1}
+.mini.ic{width:26px;padding:0;display:inline-grid;place-items:center}
+.icovis{fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.icovis .proib{stroke:#E24B4A;stroke-width:3}
+.mini.vis.priv{border-color:#E24B4A}
+.visrow{display:flex;align-items:center;gap:10px;border:var(--line);border-radius:10px;padding:10px 12px}
+.visrow .mini{flex:none;width:34px;height:34px}
+.visrow .mini .icovis{width:18px;height:18px}
+.visrow span{display:flex;flex-direction:column;font-size:14px}
+.visrow small{font-size:12px;color:var(--muted);font-weight:600}
+label.chk{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;cursor:pointer}
+label.chk input{width:18px;height:18px}
+label.chk span{display:inline-flex;align-items:center;gap:6px}
+.idaderow{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:8px}
+.idade{flex:none;min-width:34px;height:30px;padding:0 6px;border-radius:6px;background:var(--ic);color:#fff;font-weight:900;font-size:14px;display:grid;place-items:center;border:2px solid var(--ink)}
+.cover.borrado img,.cover.borrado .ph{filter:blur(16px) saturate(.6)}
+.cover.borrado::after{content:"18+ · toque para ver";position:absolute;inset:auto 8px 50% 8px;transform:translateY(50%);text-align:center;font-weight:900;font-size:12px;background:var(--ink);color:var(--card);border-radius:8px;padding:6px 4px;z-index:2}
+.cover{overflow:hidden}
+.borrado18 img{filter:blur(10px) saturate(.6)}

@@ -27,7 +27,8 @@ const show = (id) => ["setupScreen", "loginScreen", "verifyScreen", "deniedScree
 
 let items = new Map();          // id -> mangá
 const pending = new Map();      // id -> timer (alterações ainda não enviadas)
-let col = null, unsub = null, loaded = false, currentUser = null;
+let col = null, colPriv = null, unsub = null, unsubPriv = null, loaded = false, currentUser = null;
+let snapPub = new Map(), snapPriv = new Map();
 let netState = { pendingWrites: false, fromCache: true };
 let savedSort = "recent"; try { savedSort = localStorage.getItem("estante-sort") || "recent"; } catch (e) {}
 const ui = { filter: "todos", q: "", sort: savedSort, visit: null };   // visit = estante de outra pessoa aberta
@@ -215,6 +216,7 @@ $("#verifyOut").addEventListener("click", fullSignOut);
 
 function startSync(uid) {
   col = collection(db, "users", uid, "mangas");
+  colPriv = collection(db, "users", uid, "privados");
   extraUnsubs.forEach(f => { try { f(); } catch (e) {} }); extraUnsubs = [];
   extraUnsubs.push(onSnapshot(doc(db, "perfis", uid), (d) => {
     myProfile = d.exists() ? d.data() : null; updateMeBtn();
@@ -231,11 +233,22 @@ function startSync(uid) {
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
   }, 8000);
-  unsub = onSnapshot(col, { includeMetadataChanges: true }, (snap) => {
+  // junta a estante pública (mangas) com a privada (privados) num mapa só
+  const juntar = () => {
     const next = new Map();
-    snap.forEach(d => next.set(d.id, { id: d.id, ...d.data() }));
+    snapPub.forEach((v, k) => next.set(k, v));
+    snapPriv.forEach((v, k) => next.set(k, v));
     for (const id of pending.keys()) { if (items.has(id)) next.set(id, items.get(id)); else next.delete(id); }
     items = next;
+  };
+  if (unsubPriv) { try { unsubPriv(); } catch (e) {} }
+  unsubPriv = onSnapshot(colPriv, (snap) => {
+    snapPriv = new Map(); snap.forEach(d => snapPriv.set(d.id, { id: d.id, ...d.data(), privado: true }));
+    juntar(); render();
+  }, () => {});
+  unsub = onSnapshot(col, { includeMetadataChanges: true }, (snap) => {
+    snapPub = new Map(); snap.forEach(d => snapPub.set(d.id, { id: d.id, ...d.data() }));
+    juntar();
     netState = { pendingWrites: snap.metadata.hasPendingWrites, fromCache: snap.metadata.fromCache };
     if (!snap.metadata.fromCache || snap.size) { loaded = true; clearTimeout(slowT); }
     if (!snap.metadata.fromCache) setTimeout(checkNewChapters, 1500);
@@ -285,13 +298,26 @@ function flush(id) {
   pending.delete(id);
   const it = items.get(id);
   // O Firestore guarda no aparelho na hora e envia quando houver internet.
-  const p = it ? setDoc(doc(col, id), strip(it)) : deleteDoc(doc(col, id));
+  const p = it ? setDoc(doc(it.privado ? colPriv : col, id), strip(it)) : deleteDoc(doc(col, id));
   p.catch(e => {
     if (e.code === "invalid-argument" || e.code === "resource-exhausted") toast("Não foi possível salvar: a imagem é grande demais.", 4000);
     else if (e.code === "permission-denied") toast("O servidor recusou salvar. Confira se as regras novas foram publicadas no Firebase.", 5000);
     else toast("Falha ao salvar — tente de novo.", 3000);
   });
   updateSync();
+}
+// troca entre visível e privado: muda o mangá de coleção (de uma vez só)
+function trocarPrivado(id, privado) {
+  const it = items.get(id); if (!it || !!it.privado === !!privado) return;
+  clearTimeout(pending.get(id)); pending.delete(id);
+  const novo = { ...it, privado: !!privado, updatedAt: Date.now() };
+  if (!privado) delete novo.privado;
+  items.set(id, novo); render();
+  const b = writeBatch(db);
+  b.set(doc(privado ? colPriv : col, id), strip(novo));
+  b.delete(doc(privado ? col : colPriv, id));
+  b.commit().then(() => toast(privado ? "Privado: só você vê este mangá." : "Visível: aparece na sua estante pública.", 2600))
+    .catch(() => toast("Não foi possível mudar agora. Verifique a internet.", 3500));
 }
 function commit(id, patch) {
   const old = items.get(id); if (!old) return;
@@ -300,6 +326,7 @@ function commit(id, patch) {
 }
 function create(data) {
   const id = doc(col).id; const now = Date.now();
+  if (!data.privado) delete data.privado;
   items.set(id, { id, createdAt: now, updatedAt: now, lastReadAt: now, ...data });
   render(); scheduleWrite(id, 0);
 }
@@ -309,8 +336,8 @@ function remove(id) {
   clearTimeout(pending.get(id)); pending.delete(id);
   items.delete(id); render();
   const b = writeBatch(db);
-  b.set(doc(db, "users", currentUser.uid, "lixeira", id), { ...clean(it), excluidoEm: Date.now() });
-  b.delete(doc(col, id));
+  b.set(doc(db, "users", currentUser.uid, "lixeira", id), { ...clean(it), ...(it.privado ? { privado: true } : {}), excluidoEm: Date.now() });
+  b.delete(doc(it.privado ? colPriv : col, id));
   b.commit().catch(() => toast("Não foi possível mover para a lixeira agora."));
 }
 
@@ -468,13 +495,13 @@ async function traduzPT(texto) {
 // Procura no MangaDex o mesmo mangá, para pegar nome e sinopse em português quando existirem
 async function mangaDexPT(r) {
   try {
-    const j = await httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(r.original)}&contentRating[]=safe&contentRating[]=suggestive`);
+    const j = await httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(r.original)}&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic`);
     const m = (j.data || []).find(x => { const l = (x.attributes && x.attributes.links) || {}; return (r.alId && String(l.al) === String(r.alId)) || (r.malId && String(l.mal) === String(r.malId)); });
     if (!m) return {};
     const alts = m.attributes.altTitles || [];
     const alt = alts.find(t => t["pt-br"]);
     const nomes = [...Object.values(m.attributes.title || {}), ...alts.filter(t => t["pt-br"] || t.en || t["ja-ro"] || t["ko-ro"] || t["zh-ro"]).flatMap(t => Object.values(t))];
-    return { titulo: alt ? alt["pt-br"] : "", sinopse: (m.attributes.description || {})["pt-br"] || "", nomes };
+    return { titulo: alt ? alt["pt-br"] : "", sinopse: (m.attributes.description || {})["pt-br"] || "", nomes, rating: m.attributes.contentRating || "" };
   } catch (e) { return {}; }
 }
 const catCache = {};
@@ -495,6 +522,20 @@ function nomePopular(c) {
 function nomeSecundario(c, principal) {
   return String([nomePopular(c), c.nomeEN, c.nomePT, c.titulo].find(x => x && norm(x) !== norm(principal)) || "").trim().slice(0, 200);
 }
+// Classificação etária (estilo brasileiro), pelos dados do catálogo
+const IDADES = ["Livre", "10+", "12+", "14+", "16+", "18+"];
+function idadeDe(c) {
+  if (c && IDADES.includes(c.idade)) return c.idade;
+  const g = (c && c.generos) || [], r = (c && c.rating) || "";
+  if (r === "erotica" || r === "pornographic") return "18+";
+  if (r === "suggestive" || g.includes("Ecchi") || g.includes("Violência explícita")) return "16+";
+  if (g.some(x => ["Terror", "Psicológico", "Suspense", "Seinen", "Josei", "Crime organizado"].includes(x))) return "14+";
+  if (g.some(x => ["Ação", "Romance", "Drama", "Sobrenatural", "Shounen", "Mistério", "Artes marciais", "Militar", "Sobrevivência"].includes(x))) return "12+";
+  if (g.includes("Infantil")) return "Livre";
+  return g.length ? "10+" : "";
+}
+const IDADE_COR = { "Livre": "#1f9d55", "10+": "#0891b2", "12+": "#e0a100", "14+": "#ea580c", "16+": "#dc2626", "18+": "#111111" };
+const seloIdade = (id) => id ? `<span class="idade" style="--ic:${IDADE_COR[id] || "#666"}" title="Classificação indicativa">${id === "Livre" ? "L" : esc(id)}</span>` : "";
 const listaNomes = (arr) => { const v = new Set(), out = []; for (const x of arr) { const t = String(x || "").trim(); if (t && t.length <= 200 && !v.has(norm(t))) { v.add(norm(t)); out.push(t); } } return out.slice(0, 30); };
 const aliasDe = (c) => (c.nomes || []).join(" | ").slice(0, 1000);
 // Garante que o mangá escolhido está no catálogo compartilhado, já em português
@@ -504,7 +545,7 @@ async function prepararCatalogo(r) {
   const pt = await mangaDexPT(r);
   const nomes = listaNomes([r.original, r.ingles, pt.titulo, ...(pt.nomes || []), ...(r.sinonimos || [])]);
   if (salvo) {   // catálogo antigo, sem os nomes: completa
-    const extra = { nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, atualizadoEm: Date.now() };
+    const extra = { nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, idade: idadeDe({ generos: salvo.generos, rating: pt.rating }), atualizadoEm: Date.now() };
     try { await updateDoc(doc(db, "catalogo", r.key), extra); } catch (e) {}
     return (catCache[r.key] = { ...salvo, ...extra });
   }
@@ -514,7 +555,7 @@ async function prepararCatalogo(r) {
   const titulo2 = (pt.titulo && norm(pt.titulo) !== norm(r.original) ? pt.titulo : (r.ingles && norm(r.ingles) !== norm(r.original) ? r.ingles : "")).slice(0, 200);
   const c = { titulo: r.original.slice(0, 200), titulo2, generos: r.generos, sinopse: sinopse.slice(0, 4000), sinopseOrig: sinopse ? "" : orig.slice(0, 4000),
     capa: String(r.capa || "").slice(0, 500), tipo: r.tipo, alId: r.alId || null, malId: r.malId || null, atualizadoEm: Date.now(),
-    nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes };
+    nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, idade: idadeDe({ generos: r.generos, rating: pt.rating }) };
   try { await setDoc(doc(db, "catalogo", r.key), c); } catch (e) {}
   return (catCache[r.key] = c);
 }
@@ -581,6 +622,10 @@ function phHTML(title, size) {
   const initials = esc((title || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase());
   return `<div class="ph"><span${size ? ` style="font-size:${size}px"` : ""}>${initials || "?"}</span></div>`;
 }
+// ícone de visibilidade: mangá aberto (visível) ou com a placa de proibido (privado)
+const ICO_MANGA = `<path d="M12 6q-4-2-8-1v13q4-1 8 1q4-2 8-1V5q-4-1-8 1z"/><path d="M12 6v13"/>`;
+const icoVis = (priv) => `<svg viewBox="0 0 24 24" width="15" height="15" class="icovis" aria-hidden="true">${ICO_MANGA}${priv ? `<path class="proib" d="M3.5 3.5L20.5 20.5"/>` : ""}</svg>`;
+const botaoPrivado = (it) => `<button class="mini ic vis ${it.privado ? "priv" : ""}" data-act="vis" title="${it.privado ? "Privado: só você vê. Toque para deixar visível." : "Visível para quem visita. Toque para deixar privado."}" aria-label="${it.privado ? "Privado" : "Visível"}">${icoVis(it.privado)}</button>`;
 function cardHTML(it) {
   const st = stOf(it), visit = !!ui.visit;
   const cv = safeCover(it.cover), lk = fixLink(it.link);
@@ -598,7 +643,7 @@ function cardHTML(it) {
       </div>`;
   const foot = visit
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
-    : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span>${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
+    : `<div class="foot"><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
     <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
@@ -630,6 +675,10 @@ function render() {
     // a capa não abriu: avisa só o dono do mangá
     if (!ui.visit && cov && !cov.querySelector('[data-act="warnimg"]')) cov.insertAdjacentHTML("beforeend", `<button type="button" class="cwarn img" data-act="warnimg" title="A imagem desta capa não abriu">⚠️</button>`);
   }, { once: true }));
+  if (ui.visit) grid.querySelectorAll(".card").forEach(card => {
+    const it = source().get(card.dataset.id); if (!it || !it.catId) return;
+    lerCatalogo(it.catId).then(c => { if (c && idadeDe(c) === "18+" && card.isConnected) card.querySelector(".cover").classList.add("borrado"); });
+  });
   if (ui.visit && !source().size) empty.innerHTML = `<div class="empty"><p>A estante de @${esc(ui.visit.apelido)} está vazia.</p></div>`;
   else if (!source().size) empty.innerHTML = `<div class="empty"><div class="big">Estante vazia!</div><p>Adicione o primeiro mangá que você está lendo — nome, capítulo e, se quiser, uma capa.</p><button class="btn primary" id="emptyAdd">+ Adicionar mangá</button></div>`;
   else if (!arr.length) empty.innerHTML = `<div class="empty"><p>Nenhum mangá encontrado com esse filtro.</p></div>`;
@@ -703,6 +752,8 @@ function openEditor(id) {
           <label class="f">Sua nota <span style="font-weight:500;color:var(--muted)">(opcional)</span><select name="nota"><option value="">Sem nota</option>${NOTAS.map(n => `<option value="${n}" ${it && parseNota(it.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select></label>
           <span></span>
         </div>
+        <label class="chk"><input type="checkbox" id="edPriv" ${it && it.privado ? "checked" : ""}> <span>${icoVis(true)} Privado: só eu vejo este mangá</span></label>
+        <div class="hint" id="edPrivDica" style="margin-top:-8px"></div>
         <label class="f">Comentário <span style="font-weight:500;color:var(--muted)">(opcional · aparece no seu perfil público)</span><textarea name="comentario" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
         <div>
           <div style="font-size:13px;font-weight:700;margin-bottom:6px">Capa <span style="font-weight:500;color:var(--muted)">(opcional)</span></div>
@@ -748,6 +799,7 @@ function openEditor(id) {
     const aoEscolher = (key, c) => {
       catId = key; catNome = nomePopular(c); titulo2 = nomeSecundario(c, catNome); alias = aliasDe(c);
       titleInput.value = catNome; mostrarEscolha(c);
+      if (idadeDe(c) === "18+") { root.querySelector("#edPriv").checked = true; root.querySelector("#edPrivDica").textContent = "Obra 18+: sugerimos deixar privada. Desmarque se quiser mostrar na sua estante pública."; }
       root.querySelector("#catStatus").textContent = "vinculado ✓";
       if (!cover && c.capa) { cover = c.capa; paintCover(); }
     };
@@ -832,11 +884,13 @@ function openEditor(id) {
       if (catId && catSel) titulo2 = nomeSecundario(catSel, title);   // nome próprio: embaixo fica o nome conhecido do catálogo
       const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "", alias: catId ? alias : "",
         nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
+      const querPriv = root.querySelector("#edPriv").checked;
       if (it) {
+        if (!!it.privado !== querPriv) trocarPrivado(id, querPriv);
         const patch = { ...data };
         if (chapter !== (Number(it.chapter) || 0)) patch.lastReadAt = Date.now();
         commit(id, patch); toast("Salvo!");
-      } else { create(data); toast("Adicionado à estante!"); }
+      } else { create({ ...data, privado: querPriv }); toast(querPriv ? "Adicionado como privado (só você vê)." : "Adicionado à estante!"); }
       closeModal();
     });
     if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); (q || titleInput).focus(); }, 50);
@@ -1078,7 +1132,7 @@ async function openLixeira() {
       try {
         if (b.dataset.l === "rest") {
           const m = { ...x }; delete m.id; delete m.excluidoEm;
-          const bt = writeBatch(db); bt.set(doc(col, id), clean(m)); bt.delete(doc(db, "users", uid, "lixeira", id)); await bt.commit();
+          const bt = writeBatch(db); bt.set(doc(m.privado ? colPriv : col, id), clean(m)); bt.delete(doc(db, "users", uid, "lixeira", id)); await bt.commit();
           toast("Restaurado na estante!");
         } else {
           if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar de vez?"; return; }
@@ -1162,7 +1216,7 @@ function openExcluirConta() {
           }
         } catch (x) {}
         // 2) apaga os meus dados
-        for (const c of ["minhasNotas", "mangas", "lixeira", "avaliacoes"]) await apagarColecao(["users", me, c]).catch(() => {});
+        for (const c of ["minhasNotas", "mangas", "privados", "lixeira", "avaliacoes"]) await apagarColecao(["users", me, c]).catch(() => {});
         if (myProfile && myProfile.apelido) await deleteDoc(doc(db, "apelidos", apKey(myProfile.apelido))).catch(() => {});
         await deleteDoc(doc(db, "perfis", me)).catch(() => {});
         // 3) apaga o login
@@ -1215,15 +1269,19 @@ function openInfo(mid) {
              ${minha ? `<button class="btn ghost" id="rmNota">Remover minha nota</button>` : ""}`}
       </div>
       <button class="btn ${jaTenho ? "" : "primary"}" id="copyShelf" ${jaTenho ? "disabled" : ""}>${jaTenho ? "✓ Já está na sua estante" : "＋ Adicionar à minha estante (Na fila)"}</button>`
-      : `<button class="btn" id="editIt">✎ Editar este mangá</button>`}
+      : `<div class="visrow"><button type="button" class="mini ic vis ${it.privado ? "priv" : ""}" id="visInfo">${icoVis(it.privado)}</button><span><b>${it.privado ? "Privado" : "Visível"}</b><small>${it.privado ? "Só você vê. Fica fora da estante pública, da vitrine e do ranking." : "Aparece para quem visita sua estante (se o seu perfil for público)."}</small></span></div>
+      <button class="btn" id="editIt">✎ Editar este mangá</button>`}
     </div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => markSeen(a.dataset.seen)));
+    const vi = root.querySelector("#visInfo"); if (vi) vi.onclick = () => { trocarPrivado(mid, !it.privado); closeModal(); };
     const ci = root.querySelector("#catInfo");
     if (ci) lerCatalogo(it.catId).then(c => completarSinopse(it.catId, c)).then(c => {
       if (!ci.isConnected) return;
       if (!c) { ci.innerHTML = navigator.onLine ? "" : `<div class="hint">Sem internet: gêneros e sinopse aparecem quando conectar.</div>`; return; }
-      ci.innerHTML = `${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+      const idd = idadeDe(c);
+      ci.innerHTML = `${idd ? `<div class="idaderow">${seloIdade(idd)}<span>Classificação indicativa: <b>${idd === "Livre" ? "Livre para todos" : "não recomendado para menores de " + idd.replace("+", " anos")}</b></span></div>` : ""}
+        ${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
         <div class="sinopse"><b>Sinopse</b>${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
     });
     const ed = root.querySelector("#editIt"); if (ed) ed.onclick = () => openEditor(mid);
@@ -1305,7 +1363,7 @@ function openPeople(tab = "perfil") {
   const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Comunidade"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
   let corpo = "";
   if (tab === "perfil") corpo = `
-      ${p.apelido ? `<div class="vitrine mine">${vitrineHTML(p, items, false)}</div>
+      ${p.apelido ? `<div class="vitrine mine">${vitrineHTML(p, soVisiveis(), false)}</div>
       <button type="button" class="btn primary" id="vtEdit" style="width:100%">✏️ Editar vitrine</button>
       <p class="hint" style="margin-top:-4px">É assim que as pessoas veem o seu perfil.</p>` : ""}
       <div class="sect">
@@ -1336,7 +1394,7 @@ function openPeople(tab = "perfil") {
     if (tab === "ranking" && !offline) montarRanking(root);
     if (tab !== "perfil") return;
     const vtm = root.querySelector(".vitrine.mine");
-    if (vtm) ligarVitrine(vtm, items, true);
+    if (vtm) ligarVitrine(vtm, soVisiveis(), true);
     const ve = root.querySelector("#vtEdit"); if (ve) ve.onclick = openVitrineEdit;
     const fb = root.querySelector("#fotoBtn");
     if (fb) fb.onclick = openFotoEdit;
@@ -1428,6 +1486,7 @@ async function montarRanking(root) {
 
 
 // ---------- vitrine do perfil ----------
+const soVisiveis = () => new Map([...items].filter(([, it]) => !it.privado));
 const CORES = { roxo: "#7c3aed", azul: "#2563eb", ciano: "#0891b2", verde: "#16a34a", laranja: "#ea580c", vermelho: "#dc2626", rosa: "#db2777", grafite: "#475569" };
 const CORES_NOME = { roxo: "Roxo", azul: "Azul", ciano: "Ciano", verde: "Verde", laranja: "Laranja", vermelho: "Vermelho", rosa: "Rosa", grafite: "Grafite" };
 const membroDesdeAuth = () => (currentUser && Date.parse(currentUser.metadata && currentUser.metadata.creationTime)) || Date.now();
@@ -1482,6 +1541,8 @@ function vitrineHTML(p, its, visita) {
 // liga os cliques (abre o ⓘ do mangá) e calcula os gêneros favoritos pelo catálogo
 function ligarVitrine(box, its, fechar) {
   box.querySelectorAll("[data-mid]").forEach(b => b.onclick = () => { const id = b.dataset.mid; if (fechar) closeModal(); openInfo(id); });
+  // na vitrine de outra pessoa, capas de obras 18+ ficam borradas
+  if (!fechar) box.querySelectorAll("[data-mid]").forEach(b => { const it = its.get(b.dataset.mid); if (it && it.catId) lerCatalogo(it.catId).then(c => { if (c && idadeDe(c) === "18+") b.classList.add("borrado18"); }); });
 }
 async function bannerDaGaleria(blob) {
   const url = URL.createObjectURL(blob);
@@ -1955,6 +2016,8 @@ $("#grid").addEventListener("click", (e) => {
   const id = btn.closest(".card").dataset.id;
   const act = btn.dataset.act;
   if (ui.visit) {                       // estante de outra pessoa: só ver detalhes e abrir o site
+    const cv = btn.closest(".cover");
+    if (cv && cv.classList.contains("borrado")) { e.preventDefault(); cv.classList.remove("borrado"); return; }   // 18+: primeiro toque revela
     if (act === "info") { e.preventDefault(); openInfo(id); }
     return;
   }
@@ -1963,6 +2026,7 @@ $("#grid").addEventListener("click", (e) => {
   if (act === "read") { markSeen(id); return; }
   if (act === "info") { e.preventDefault(); openInfo(id); return; }
   if (act === "warnimg" || act === "warnlink") { e.preventDefault(); e.stopPropagation(); avisoCard(id, act); return; }
+  if (act === "vis") { e.preventDefault(); trocarPrivado(id, !it.privado); return; }
   if (act === "plus") commit(id, { chapter: Math.floor(c) + 1, lastReadAt: Date.now() });
   else if (act === "minus") { if (c > 0) commit(id, { chapter: Math.max(0, Math.ceil(c) - 1), lastReadAt: Date.now() }); }
   else if (act === "goto") openGoto(id);

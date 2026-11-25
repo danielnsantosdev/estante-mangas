@@ -30,7 +30,7 @@ service cloud.firestore {
 
     // ---------- validações ----------
     function nomesOk(d) {
-      return texto(d, 'nomeEN', 200) && texto(d, 'nomePT', 200)
+      return texto(d, 'nomeEN', 200) && texto(d, 'nomePT', 200) && texto(d, 'idade', 6)
         && (!('nomes' in d) || (d.nomes is list && d.nomes.size() <= 30));
     }
     function notaOk(n) { return n is number && n >= 1 && n <= 10 && math.floor(n * 2) == n * 2; }
@@ -50,8 +50,8 @@ service cloud.firestore {
     }
     function lixeiraValida() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm'])
-        && camposManga(d) && d.excluidoEm is number;
+      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm', 'privado'])
+        && camposManga(d) && d.excluidoEm is number && (!('privado' in d) || d.privado is bool);
     }
     // Nota que um visitante deixa: { nota, apelido (o dele, de verdade), em }
     function avaliacaoOk(v) {
@@ -122,6 +122,12 @@ service cloud.firestore {
       allow create, update: if dono(uid) && acesso() && mangaValido();
     }
 
+    // ---------- mangás privados: só o dono lê e escreve (visitantes e ranking nunca veem) ----------
+    match /users/{uid}/privados/{mangaId} {
+      allow read, delete: if dono(uid);
+      allow create, update: if dono(uid) && acesso() && mangaValido();
+    }
+
     // ---------- lixeira (só o dono vê) ----------
     match /users/{uid}/lixeira/{mangaId} {
       allow read, delete: if dono(uid);
@@ -169,7 +175,7 @@ service cloud.firestore {
       allow read: if acesso();
       allow create: if acesso()
         && id.matches('^(al|mal)[0-9]{1,10}$')
-        && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm', 'nomeEN', 'nomePT', 'nomes'])
+        && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm', 'nomeEN', 'nomePT', 'nomes', 'idade'])
         && nomesOk(request.resource.data)
         && request.resource.data.titulo is string && request.resource.data.titulo.size() > 0 && request.resource.data.titulo.size() <= 200
         && texto(request.resource.data, 'titulo2', 200) && texto(request.resource.data, 'sinopse', 4000)
@@ -181,7 +187,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sinopse', 'atualizadoEm'])
           && texto(request.resource.data, 'sinopse', 4000))
         || (!('nomes' in resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nomeEN', 'nomePT', 'nomes', 'atualizadoEm'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nomeEN', 'nomePT', 'nomes', 'idade', 'atualizadoEm'])
           && nomesOk(request.resource.data)));
     }
 
