@@ -41,16 +41,17 @@ service cloud.firestore {
         && d.status in ['lendo', 'fila', 'acumulando', 'pausado', 'concluido']
         && texto(d, 'link', 2000) && texto(d, 'cover', 400000)
         && (!('nota' in d) || d.nota == null || notaOk(d.nota))
-        && texto(d, 'comentario', 300) && texto(d, 'catId', 40) && texto(d, 'titulo2', 200) && texto(d, 'alias', 1000);
+        && texto(d, 'comentario', 300) && texto(d, 'catId', 40) && texto(d, 'titulo2', 200) && texto(d, 'alias', 1000)
+        && (!('capa18' in d) || d.capa18 is bool);
     }
     function mangaValido() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario'])
+      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'capa18'])
         && camposManga(d);
     }
     function lixeiraValida() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm', 'privado'])
+      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm', 'privado', 'capa18'])
         && camposManga(d) && d.excluidoEm is number && (!('privado' in d) || d.privado is bool);
     }
     // Nota que um visitante deixa: { nota, apelido (o dele, de verdade), em }
@@ -204,6 +205,21 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.texto is string && request.resource.data.texto.size() > 0 && request.resource.data.texto.size() <= 1000
         && request.resource.data.resolvido == false;
+      allow read, update, delete: if admin();
+    }
+
+    // ---------- denúncias: uma por pessoa, por mangá ----------
+    match /denuncias/{id} {
+      allow create: if acesso()
+        && request.resource.data.keys().hasOnly(['de', 'apelidoDe', 'alvo', 'alvoApelido', 'mangaId', 'titulo', 'motivo', 'texto', 'criadoEm', 'resolvido'])
+        && request.resource.data.de == request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.alvo + '_' + request.resource.data.mangaId
+        && request.resource.data.motivo in ['capa', 'nome', 'comentario', 'spam', 'outro']
+        && texto(request.resource.data, 'texto', 300) && texto(request.resource.data, 'titulo', 120)
+        && texto(request.resource.data, 'apelidoDe', 30) && texto(request.resource.data, 'alvoApelido', 30)
+        && request.resource.data.alvo is string && request.resource.data.alvo.size() <= 128
+        && request.resource.data.mangaId is string && request.resource.data.mangaId.size() <= 100
+        && request.resource.data.criadoEm is number && request.resource.data.resolvido == false;
       allow read, update, delete: if admin();
     }
 

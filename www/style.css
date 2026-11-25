@@ -571,3 +571,5 @@ label.chk span{display:inline-flex;align-items:center;gap:6px}
 
 /* "lido há X dias": só no PC */
 @media (max-width:520px){ .foot .when{display:none} }
+/* denúncia */
+.denbtn{color:var(--red);font-size:13px;min-height:34px;align-self:center}

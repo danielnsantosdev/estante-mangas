@@ -290,6 +290,7 @@ function clean(it) {
     nota: parseNota(it.nota),
     comentario: String(it.comentario || "").trim().slice(0, 300),
   };
+  if (it.capa18) o.capa18 = true;   // capa com conteúdo adulto: o mangá não pode ficar público
   for (const k of ["createdAt", "updatedAt", "lastReadAt"]) { const n = Number(it[k]); o[k] = isFinite(n) && n > 0 ? n : now; }
   return o;
 }
@@ -314,6 +315,7 @@ function flush(id) {
 // troca entre visível e privado: muda o mangá de coleção (de uma vez só)
 function trocarPrivado(id, privado) {
   const it = items.get(id); if (!it || !!it.privado === !!privado) return;
+  if (!privado && bloqueioPublico(it)) { toast(MSG_BLOQ[bloqueioPublico(it)], 5000); return; }
   clearTimeout(pending.get(id)); pending.delete(id);
   const novo = { ...it, privado: !!privado, updatedAt: Date.now() };
   if (!privado) delete novo.privado;
@@ -778,7 +780,7 @@ function openEditor(id) {
           <span></span>
         </div>
         <label class="chk"><input type="checkbox" id="edPriv" ${it && it.privado ? "checked" : ""}> <span>${icoVis(true)} Privado: só eu vejo este mangá</span></label>
-        <div class="hint" id="edPrivDica" style="margin-top:-8px"></div>
+        <div class="hint" id="edPrivDica" style="margin-top:-8px">${it && bloqueioPublico(it) ? esc(MSG_BLOQ[bloqueioPublico(it)]) : ""}</div>
         <label class="f">Comentário <span style="font-weight:500;color:var(--muted)">(opcional · aparece no seu perfil público)</span><textarea name="comentario" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
         <div>
           <div style="font-size:13px;font-weight:700;margin-bottom:6px">Capa <span style="font-weight:500;color:var(--muted)">(opcional)</span></div>
@@ -897,8 +899,10 @@ function openEditor(id) {
       if (!confirmDel) { confirmDel = true; del.textContent = "Confirmar exclusão?"; del.style.background = "var(--red)"; del.style.color = "#fff"; return; }
       remove(id); closeModal(); toast("Movido para a lixeira (fica lá por 30 dias).", 3500);
     };
-    root.querySelector("#ed").addEventListener("submit", (e) => {
+    let verificando = false;
+    root.querySelector("#ed").addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (verificando) return;
       const fd = new FormData(e.target);
       const title = String(fd.get("title") || "").trim();
       if (!title) return;
@@ -909,13 +913,34 @@ function openEditor(id) {
       if (catId && catSel) titulo2 = nomeSecundario(catSel, title);   // nome próprio: embaixo fica o nome conhecido do catálogo
       const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "", alias: catId ? alias : "",
         nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
-      const querPriv = root.querySelector("#edPriv").checked;
+      // capa nova? confere se tem conteúdo adulto (no próprio aparelho)
+      let capa18 = !!(it && it.capa18 && cover === it.cover);
+      if (cover && (!it || cover !== it.cover)) {
+        const sb = root.querySelector('#ed [type="submit"]'), txt = sb.textContent;
+        verificando = true; sb.disabled = true; sb.textContent = "Verificando a capa…";
+        capa18 = (await verificarImagem(cover)) === "adulto";
+        verificando = false; sb.disabled = false; sb.textContent = txt;
+        if (!root.isConnected) return;
+      }
+      data.capa18 = capa18;
+      const bloq = bloqueioPublico(data);
+      let querPriv = root.querySelector("#edPriv").checked;
+      if (bloq && !querPriv) querPriv = true;
+      const aviso = bloq ? MSG_BLOQ[bloq] : "";
       if (it) {
-        if (!!it.privado !== querPriv) trocarPrivado(id, querPriv);
+        if (!!it.privado !== querPriv) {
+          // muda de coleção já com os dados novos (a capa e o nome entram juntos)
+          items.set(id, { ...it, ...data }); if (!capa18) delete items.get(id).capa18;
+          trocarPrivado(id, querPriv);
+        }
         const patch = { ...data };
         if (chapter !== (Number(it.chapter) || 0)) patch.lastReadAt = Date.now();
-        commit(id, patch); toast("Salvo!");
-      } else { create({ ...data, privado: querPriv }); toast(querPriv ? "Adicionado como privado (só você vê)." : "Adicionado à estante!"); }
+        commit(id, patch); if (!capa18) { const n = items.get(id); if (n) delete n.capa18; }
+        toast(aviso || "Salvo!", aviso ? 6000 : 2000);
+      } else {
+        const novo = { ...data, privado: querPriv }; if (!capa18) delete novo.capa18;
+        create(novo); toast(aviso || (querPriv ? "Adicionado como privado (só você vê)." : "Adicionado à estante!"), aviso ? 6000 : 2000);
+      }
       closeModal();
     });
     if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); (q || titleInput).focus(); }, 50);
@@ -964,7 +989,7 @@ function openMenu() {
     <div class="mbody">
       <div class="acct"><div><b>${esc(u.email || "Sua conta")}</b><small>${isAdmin(u) ? "👑 Administrador" : "Conta conectada"}</small></div></div>
       <div class="menu-list">
-        ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button>` : ""}
+        ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button><button class="btn" id="mDen">🚩 Denúncias</button>` : ""}
         <button class="btn" id="mLix">🗑️ Lixeira</button>
         <button class="btn" id="mSupport">🛠️ Reportar problema</button>
         <button class="btn" id="mSenha">🔑 Trocar senha</button>
@@ -978,6 +1003,7 @@ function openMenu() {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const ab = root.querySelector("#mAdmin"); if (ab) ab.onclick = openAdmin;
     const rb = root.querySelector("#mReports"); if (rb) rb.onclick = openReports;
+    const db2 = root.querySelector("#mDen"); if (db2) db2.onclick = openDenuncias;
     root.querySelector("#mSupport").onclick = openSupport;
     root.querySelector("#mLix").onclick = openLixeira;
     root.querySelector("#mSenha").onclick = openSenha;
@@ -1293,7 +1319,8 @@ function openInfo(mid) {
           : `<div class="urlrow"><select id="myNota" class="f-sel"><option value="">Escolha…</option>${NOTAS.map(n => `<option value="${n}" ${minha && parseNota(minha.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select><button class="btn primary" id="saveNota">${minha ? "Atualizar" : "Avaliar"}</button></div>
              ${minha ? `<button class="btn ghost" id="rmNota">Remover minha nota</button>` : ""}`}
       </div>
-      <button class="btn ${jaTenho ? "" : "primary"}" id="copyShelf" ${jaTenho ? "disabled" : ""}>${jaTenho ? "✓ Já está na sua estante" : "＋ Adicionar à minha estante (Na fila)"}</button>`
+      <button class="btn ${jaTenho ? "" : "primary"}" id="copyShelf" ${jaTenho ? "disabled" : ""}>${jaTenho ? "✓ Já está na sua estante" : "＋ Adicionar à minha estante (Na fila)"}</button>
+      <button class="btn ghost denbtn" id="denIt">🚩 Denunciar</button>`
       : `<div class="visrow"><button type="button" class="mini ic vis ${it.privado ? "priv" : ""}" id="visInfo">${icoVis(it.privado)}</button><span><b>${it.privado ? "Privado" : "Visível"}</b><small>${it.privado ? "Só você vê. Fica fora da estante pública, da vitrine e do ranking." : "Aparece para quem visita sua estante (se o seu perfil for público)."}</small></span></div>
       <button class="btn" id="editIt">✎ Editar este mangá</button>`}
     </div>`, (root) => {
@@ -1310,6 +1337,7 @@ function openInfo(mid) {
         <div class="sinopse"><b>Sinopse</b>${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
     });
     const ed = root.querySelector("#editIt"); if (ed) ed.onclick = () => openEditor(mid);
+    const dn = root.querySelector("#denIt"); if (dn) dn.onclick = () => openDenuncia(visit, mid, it);
     root.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
       if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remover?"; return; }
       try { await updateDoc(doc(db, "users", me, "avaliacoes", mid), { [`notas.${b.dataset.rm}`]: deleteField() }); toast("Nota removida."); setTimeout(() => openInfo(mid), 300); }
@@ -1379,6 +1407,64 @@ function apelidoOfensivo(a) {
   const n = norm(a).replace(/0/g, "o").replace(/1/g, "i").replace(/3/g, "e").replace(/4/g, "a").replace(/5/g, "s").replace(/7/g, "t").replace(/[^a-z]/g, "");
   return AP_RUINS_CONTEM.some(w => n.includes(w)) || AP_RUINS_IGUAL.some(w => n === w || n === w + "s");
 }
+// ---------- verificação automática de imagens e nomes (roda no próprio aparelho, nada é enviado) ----------
+let nsfwP = null;
+function carregarVerificador() {
+  if (!nsfwP) nsfwP = new Promise((res, rej) => {
+    if (window.EstanteNSFW) return res(window.EstanteNSFW);
+    const s = document.createElement("script"); s.src = "nsfw.js";
+    s.onload = () => window.EstanteNSFW ? res(window.EstanteNSFW) : rej(new Error("sem verificador"));
+    s.onerror = () => rej(new Error("sem verificador"));
+    document.head.appendChild(s);
+  }).catch(e => { nsfwP = null; throw e; });
+  return nsfwP;
+}
+// abre a imagem (ou 2 quadros do vídeo) de um jeito que o verificador consegue ler
+function quadrosDe(src) {
+  return new Promise((res, rej) => {
+    const remoto = /^https?:/i.test(src);
+    const tempo = setTimeout(() => rej(new Error("demorou")), 15000);
+    if (ehVideo(src)) {
+      const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; if (remoto) v.crossOrigin = "anonymous";
+      const quadros = []; let alvo = [];
+      const tira = () => { const c = document.createElement("canvas"); c.width = 224; c.height = 224; c.getContext("2d").drawImage(v, 0, 0, 224, 224); quadros.push(c); };
+      v.onloadedmetadata = () => { const d = isFinite(v.duration) && v.duration > 0 ? v.duration : 1; alvo = [d * 0.2, d * 0.6]; v.currentTime = alvo.shift(); };
+      v.onseeked = () => { try { tira(); } catch (e) { clearTimeout(tempo); rej(e); return; } if (alvo.length) v.currentTime = alvo.shift(); else { clearTimeout(tempo); res(quadros); } };
+      v.onerror = () => { clearTimeout(tempo); rej(new Error("video")); };
+      v.src = src; return;
+    }
+    const i = new Image(); if (remoto) i.crossOrigin = "anonymous";
+    i.onload = () => { clearTimeout(tempo); res([i]); }; i.onerror = () => { clearTimeout(tempo); rej(new Error("img")); };
+    i.src = src;
+  });
+}
+// "adulto" | "ok" | "?" (não deu para verificar: sem internet, site que não deixa ler a imagem…)
+async function verificarImagem(src) {
+  if (!src) return "ok";
+  try {
+    const V = await carregarVerificador();
+    for (const q of await quadrosDe(src)) {
+      const p = await V.classificar(q);
+      const explicito = (p.Porn || 0) + (p.Hentai || 0);
+      if (explicito >= 0.7 || (p.Porn || 0) >= 0.5) return "adulto";
+    }
+    return "ok";
+  } catch (e) { return "?"; }
+}
+// nomes de mangá que pedem cuidado: não bloqueia, só deixa privado
+const NOME18_CONTEM = ["hentai", "porn", "xxx", "nsfw", "putaria", "pedofil", "estupr", "incest", "lolicon", "shotacon", "milf", "fetich"];
+const NOME18_IGUAL = ["sex", "sexo", "sexy", "nude", "nudes", "nua", "nuas", "erotico", "erotica", "erotic", "ero", "r18", "18"];
+function nomeSuspeito(t) {
+  const n = norm(t || "");
+  const junto = n.replace(/[^a-z0-9]/g, ""), palavras = n.split(/[^a-z0-9]+/).filter(Boolean);
+  return NOME18_CONTEM.some(w => junto.includes(w)) || palavras.some(w => NOME18_IGUAL.includes(w)) || AP_RUINS_CONTEM.some(w => junto.includes(w));
+}
+// motivo para este mangá não poder ficar público (ou "")
+const bloqueioPublico = (it) => it.capa18 ? "capa" : nomeSuspeito(it.title) ? "nome" : "";
+const MSG_BLOQ = {
+  capa: "Essa capa parece ter conteúdo adulto, então o mangá fica privado. Para deixar público, troque a imagem.",
+  nome: "O nome deste mangá parece ter conteúdo adulto, então ele fica privado. Para deixar público, mude o nome.",
+};
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const nomeMes = (m) => { const [a, b] = String(m || "").split("-").map(Number); return a && b ? `${MESES[b - 1]} de ${a}` : ""; };
 // 👤 "Social": Meu perfil · Comunidade · Ranking
@@ -1862,6 +1948,12 @@ function openVitrineEdit() {
       const texto = bio.value.replace(/\s+/g, " ").trim().slice(0, 120);
       if (texto && AP_RUINS_CONTEM.some(w => norm(texto).replace(/[^a-z]/g, "").includes(w))) { toast("A mini-bio tem palavras não permitidas.", 4000); return; }
       const patch = { banner: d.banner, bannerPos: d.pos, cor: d.cor, bio: texto, favoritos: d.favoritos.slice(0, 3) };
+      if (d.banner && d.banner !== safeBanner(p.banner)) {
+        const sb = root.querySelector("#veSave"); sb.disabled = true; sb.textContent = "Verificando a imagem…";
+        const r = await verificarImagem(d.banner);
+        sb.disabled = false; sb.textContent = "Salvar";
+        if (r === "adulto") { toast("Essa imagem parece ter conteúdo adulto e não pode ser usada na vitrine (todos veem). Escolha outra.", 6000); return; }
+      }
       try {
         await setDoc(doc(db, "perfis", currentUser.uid), perfilData(patch));
         myProfile = { ...myProfile, ...patch };
@@ -1936,6 +2028,12 @@ function openFotoEdit() {
       painel.insertAdjacentHTML("beforeend", `<p class="vgcred">GIFs: Powered by GIPHY · KLIPY</p>`);
     };
     root.querySelector("#fpSave").onclick = async () => {
+      if (foto && foto !== safeFoto(p.foto)) {
+        const sb = root.querySelector("#fpSave"); sb.disabled = true; sb.textContent = "Verificando a foto…";
+        const r = await verificarImagem(foto);
+        sb.disabled = false; sb.textContent = "Salvar";
+        if (r === "adulto") { toast("Essa foto parece ter conteúdo adulto e não pode ser usada no perfil (todos veem). Escolha outra.", 6000); return; }
+      }
       try { await setDoc(doc(db, "perfis", currentUser.uid), perfilData({ foto })); myProfile = { ...myProfile, foto }; updateMeBtn(); toast("Foto atualizada!"); openPeople("perfil"); }
       catch (x) { toast("Não foi possível salvar a foto. Verifique a internet.", 4000); }
     };
@@ -2010,6 +2108,63 @@ function openReports() {
       try {
         if (b.dataset.r === "ok") await updateDoc(doc(db, "suporte", id), { resolvido: true });
         else { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar?"; return; } await deleteDoc(doc(db, "suporte", id)); }
+      } catch (x) { toast("Não foi possível alterar."); }
+    });
+    return () => { if (un) un(); };
+  });
+}
+
+// ---------- denúncias ----------
+const MOTIVOS_DEN = { capa: "Capa imprópria (conteúdo adulto ou violento)", nome: "Nome ofensivo", comentario: "Comentário ofensivo", spam: "Spam ou propaganda", outro: "Outro motivo" };
+function openDenuncia(visit, mid, it) {
+  openModal(`
+    <form id="denF">
+      <div class="mhead"><h2>🚩 Denunciar</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="mbody">
+        <p class="hint" style="margin-top:0">Denunciando <b>${esc(it.title)}</b> na estante de <b>@${esc(visit.apelido)}</b>. A pessoa não fica sabendo quem denunciou.</p>
+        <div class="menu-list">${Object.entries(MOTIVOS_DEN).map(([k, v], i) => `<label class="chk"><input type="radio" name="m" value="${k}" ${i ? "" : "checked"}> <span>${v}</span></label>`).join("")}</div>
+        <label class="f">Detalhes (opcional)<textarea name="t" maxlength="300" rows="3" placeholder="Conte o que está errado."></textarea></label>
+      </div>
+      <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="submit" class="btn primary">Enviar denúncia</button></div>
+    </form>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelector("#denF").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const me = currentUser.uid, sb = e.target.querySelector("[type=submit]"); sb.disabled = true;
+      const den = { de: me, apelidoDe: String((myProfile && myProfile.apelido) || "").slice(0, 30), alvo: visit.uid, alvoApelido: String(visit.apelido || "").slice(0, 30),
+        mangaId: mid, titulo: String(it.title || "").slice(0, 120), motivo: e.target.m.value, texto: e.target.t.value.trim().slice(0, 300), criadoEm: Date.now(), resolvido: false };
+      try { await setDoc(doc(db, "denuncias", `${me}_${visit.uid}_${mid}`), den); closeModal(); toast("Denúncia enviada. Obrigado por ajudar a manter a comunidade legal! 🙌", 4000); }
+      catch (x) { sb.disabled = false; toast(x.code === "permission-denied" ? "Você já denunciou este mangá. Ele está em análise." : "Não foi possível enviar agora. Verifique a internet.", 4500); }
+    });
+  });
+}
+function openDenuncias() {
+  let un = null;
+  openModal(`
+    <div class="mhead"><h2>🚩 Denúncias</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><div id="dlist" class="menu-list"><div class="hint">Carregando…</div></div></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const dl = root.querySelector("#dlist");
+    let lista = [];
+    un = onSnapshot(collection(db, "denuncias"), (snap) => {
+      lista = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.resolvido - b.resolvido) || (b.criadoEm || 0) - (a.criadoEm || 0));
+      // quantas pessoas denunciaram o mesmo mangá
+      const conta = {}; lista.forEach(r => { const k = r.alvo + "/" + r.mangaId; conta[k] = (conta[k] || 0) + (r.resolvido ? 0 : 1); });
+      dl.innerHTML = lista.length ? lista.map(r => `
+        <div class="report ${r.resolvido ? "done" : ""}" data-id="${esc(r.id)}">
+          <div class="rmeta">${r.resolvido ? "✅" : "🚩"} <b>${esc(r.titulo)}</b> · estante de <b>@${esc(r.alvoApelido || "?")}</b>${!r.resolvido && conta[r.alvo + "/" + r.mangaId] > 1 ? ` · <b style="color:var(--red)">${conta[r.alvo + "/" + r.mangaId]} denúncias</b>` : ""}</div>
+          <div class="rmeta">${esc(MOTIVOS_DEN[r.motivo] || r.motivo)} · por @${esc(r.apelidoDe || "?")} · ${new Date(r.criadoEm || 0).toLocaleString("pt-BR")}</div>
+          ${r.texto ? `<div class="rtext">${esc(r.texto)}</div>` : ""}
+          <div class="ract"><button class="mini" data-r="ver">Ver estante</button>${r.resolvido ? "" : `<button class="mini" data-r="ok">✓ Resolvido</button>`}<button class="mini" data-r="del" style="color:var(--red)">Apagar</button></div>
+        </div>`).join("") : `<div class="hint">Nenhuma denúncia. 🎉</div>`;
+    }, () => { dl.innerHTML = `<div class="err">Sem permissão para ver as denúncias.</div>`; });
+    dl.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-r]"); if (!b) return;
+      const id = b.closest("[data-id]").dataset.id, r = lista.find(x => x.id === id); if (!r) return;
+      try {
+        if (b.dataset.r === "ver") { openVisit(r.alvo, r.alvoApelido, ""); return; }
+        if (b.dataset.r === "ok") await updateDoc(doc(db, "denuncias", id), { resolvido: true });
+        else { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar?"; return; } await deleteDoc(doc(db, "denuncias", id)); }
       } catch (x) { toast("Não foi possível alterar."); }
     });
     return () => { if (un) un(); };
