@@ -638,7 +638,8 @@ function filtered() {
   if (ui.sort === "name") arr.sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   else if (ui.sort === "stale") arr.sort((a, b) => (a.lastReadAt || 0) - (b.lastReadAt || 0));
   else if (ui.sort === "nota") arr.sort((a, b) => (parseNota(b.nota) || 0) - (parseNota(a.nota) || 0) || norm(a.title).localeCompare(norm(b.title)));
-  else arr.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  // "Mais recentes" = ordem em que foi adicionado: mexer no card (capítulo, privado, editar) não muda a posição
+  else arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0) || String(a.id).localeCompare(String(b.id)));
   return arr;
 }
 function renderChips() {
