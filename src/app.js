@@ -1777,7 +1777,7 @@ async function adicionarObra(x, btn) {
 }
 
 // ---------- Para você: 10 sugestões; "Não me interessa" troca por outra ----------
-const PV_KEY = () => "estante-pv-v1-" + (currentUser ? currentUser.uid : "");
+const PV_KEY = () => "estante-pv-v2-" + (currentUser ? currentUser.uid : "");
 const PV_PROIBIDOS = ["Ecchi", "Hentai"];
 const PV_VARIAR = ["Sports", "Mystery", "Romance", "Comedy", "Slice of Life", "Horror", "Sci-Fi", "Psychological", "Drama", "Supernatural", "Adventure", "Fantasy", "Action"];
 const PV_CAMPOS = "id idMal type format isAdult genres countryOfOrigin title{romaji english} synonyms coverImage{large} description(asHtml:false)";
@@ -1785,11 +1785,25 @@ const aniQ = (query) => httpJSON("https://graphql.anilist.co", { method: "POST",
 function pvLer() { try { return JSON.parse(localStorage.getItem(PV_KEY()) || "{}"); } catch (e) { return {}; } }
 function pvSalvar(o) { try { localStorage.setItem(PV_KEY(), JSON.stringify(o)); } catch (e) {} }
 const pvOk = (m) => m && m.type === "MANGA" && m.format !== "NOVEL" && !m.isAdult && !(m.genres || []).some(g => PV_PROIBIDOS.includes(g)) && (m.coverImage && m.coverImage.large);
-const pvItem = (m) => { const r = rDeAniList(m); return { chave: r.key, catId: r.key, titulo: r.ingles && TIPO[m.countryOfOrigin] === "Mangá" ? r.ingles : (r.original || r.ingles), capa: r.capa, r }; };
+// nome mais conhecido: o inglês (Solo Leveling, e não Na Honjaman Level Up); se não tiver, o original
+const pvItem = (m) => { const r = rDeAniList(m); return { chave: r.key, catId: r.key, titulo: r.ingles || r.original, capa: r.capa, alId: r.alId, malId: r.malId,
+  nomes: [r.ingles, r.original, ...(r.sinonimos || [])].filter(Boolean).slice(0, 12), r }; };
+// tudo o que identifica as obras da sua estante: ids do catálogo (AniList e MyAnimeList) e todos os nomes
+async function pvMinhaEstante() {
+  const ids = new Set(), nomes = new Set();
+  const poeNome = (t) => { const n = norm(t).replace(/[^a-z0-9]/g, ""); if (n.length >= 3) nomes.add(n); };
+  const meus = [...items.values()];
+  for (const it of meus) { if (it.catId) ids.add(it.catId); poeNome(it.title); poeNome(it.titulo2); String(it.alias || "").split("|").forEach(poeNome); }
+  const cats = await Promise.all(meus.filter(it => it.catId).slice(0, 80).map(it => lerCatalogo(it.catId).catch(() => null)));
+  cats.forEach(c => { if (!c) return; if (c.alId) ids.add("al" + c.alId); if (c.malId) ids.add("mal" + c.malId); [c.titulo, c.titulo2, c.nomeEN, c.nomePT, ...(c.nomes || [])].forEach(poeNome); });
+  return { ids, nomes };
+}
+const pvJaTenho = (x, est) => est.ids.has(x.chave) || (x.alId && est.ids.has("al" + x.alId)) || (x.malId && est.ids.has("mal" + x.malId))
+  || [x.titulo, ...(x.nomes || [])].some(t => est.nomes.has(norm(t).replace(/[^a-z0-9]/g, "")));
 async function pvMontarFila(dados) {
   const meus = [...items.values()];
-  const tenho = new Set(); meus.forEach(it => { if (it.catId) tenho.add(it.catId); tenho.add("t:" + norm(it.title)); });
-  const jaTenho = (x) => tenho.has(x.chave) || tenho.has("t:" + norm(x.titulo)) || (x.r && (tenho.has("al" + x.r.alId) || (x.r.malId && tenho.has("mal" + x.r.malId))));
+  const est = await pvMinhaEstante();
+  const jaTenho = (x) => pvJaTenho(x, est);
   // gêneros que você mais lê (pelo catálogo)
   const ligados = meus.filter(it => it.catId).slice(0, 60);
   const cats = await Promise.all(ligados.map(it => lerCatalogo(it.catId).catch(() => null)));
@@ -1848,7 +1862,20 @@ async function montarParaVoce(area, dados) {
     pvSalvar(pv);
   }
   if (!area.isConnected) return;
+  // o que entrou na estante (por aqui ou de outro jeito) sai das sugestões e dá lugar a outra
+  try {
+    const est = await pvMinhaEstante(); let mudou = false;
+    pv.mostra = pv.mostra.map(x => { if (!pvJaTenho(x, est)) return x; mudou = true; return pvProxima(pv, x.tipo, est) || null; }).filter(Boolean);
+    if (mudou) pvSalvar(pv);
+  } catch (e) {}
+  if (!area.isConnected) return;
   desenharPV(area, pv);
+}
+// próxima sugestão da fila do mesmo tipo, pulando o que já está na estante
+function pvProxima(pv, tipo, est) {
+  const fila = pv.fila[tipo === "v" ? "v" : "p"] || [];
+  while (fila.length) { const p = fila.shift(); if (!est || !pvJaTenho(p, est)) return { ...p, tipo }; }
+  return null;
 }
 function desenharPV(area, pv, novo) {
   const g = area.querySelector(".pvg"); if (!g) return;
@@ -1856,14 +1883,27 @@ function desenharPV(area, pv, novo) {
     <div class="pvacts">${naEstante(x) ? `<span class="mini rktem">✓ Na fila</span>` : `<button type="button" class="mini rkadd" data-pvadd="${esc(x.chave)}">+ Adicionar na fila</button>`}<button type="button" class="mini pvnao" data-nao="${esc(x.chave)}">Não me interessa</button></div></div>`).join("");
   g.onclick = (e) => {
     const a = e.target.closest("[data-pvadd]");
-    if (a) { e.stopPropagation(); const x = pv.mostra.find(y => y.chave === a.dataset.pvadd); if (x) adicionarObraPV(x, a); return; }
+    if (a) {
+      e.stopPropagation(); const i = pv.mostra.findIndex(y => y.chave === a.dataset.pvadd); if (i < 0) return;
+      const x = pv.mostra[i];
+      adicionarObraPV(x, a).then(() => {
+        // adicionada: sai das sugestões e entra outra no lugar (não volta mais)
+        const prox = pvProxima(pv, x.tipo);
+        if (prox) pv.mostra[i] = prox; else pv.mostra.splice(i, 1);
+        pvSalvar(pv);
+        const card = a.closest(".rkcard"); if (card) card.classList.add("sai");
+        setTimeout(() => desenharPV(area, pv, prox && prox.chave), 220);
+      });
+      return;
+    }
     const n = e.target.closest("[data-nao]"); if (!n) return;
     e.stopPropagation();
     const k = n.dataset.nao, i = pv.mostra.findIndex(y => y.chave === k); if (i < 0) return;
     const sai = pv.mostra[i], fila = pv.fila[sai.tipo === "v" ? "v" : "p"];
     pv.nao = [...(pv.nao || []).filter(y => y !== k), k].slice(-300);
     fila.push(sai);   // volta para o fim da fila: só reaparece depois de todas as outras
-    const prox = fila.shift();
+    let prox = fila.shift();
+    while (prox && prox.chave !== k && naEstante(prox)) prox = fila.shift();
     pv.mostra[i] = prox && prox.chave !== k ? { ...prox, tipo: sai.tipo } : sai;
     pvSalvar(pv);
     const card = n.closest(".rkcard"); card.classList.add("sai");
@@ -1875,7 +1915,6 @@ async function adicionarObraPV(x, btn) {
   btn.disabled = true; btn.textContent = "Adicionando…";
   try { if (x.r) await prepararCatalogo(x.r); } catch (e) {}
   await adicionarObra({ chave: x.chave, catId: x.catId, titulo: x.titulo, capa: x.capa }, null);
-  const s = document.createElement("span"); s.className = "mini rktem"; s.textContent = "✓ Na fila"; btn.replaceWith(s);
 }
 
 
