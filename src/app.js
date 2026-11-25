@@ -838,6 +838,7 @@ function openEditor(id) {
       const im = prev.querySelector("img");
       if (im) im.onerror = () => { toast("Essa imagem não abriu. Tente outro link ou use uma foto do aparelho.", 4000); cover = ""; paintCover(); };
       root.querySelector("#rmCover").style.display = cover ? "" : "none";
+      if (cover && (!it || cover !== it.cover)) carregarVerificador().catch(() => {});   // já vai preparando a verificação
     };
     paintCover();
     titleInput.addEventListener("input", () => { if (!cover) paintCover(); });
@@ -1453,7 +1454,7 @@ async function verificarImagem(src) {
 }
 // nomes de mangá que pedem cuidado: não bloqueia, só deixa privado
 const NOME18_CONTEM = ["hentai", "porn", "xxx", "nsfw", "putaria", "pedofil", "estupr", "incest", "lolicon", "shotacon", "milf", "fetich"];
-const NOME18_IGUAL = ["sex", "sexo", "sexy", "nude", "nudes", "nua", "nuas", "erotico", "erotica", "erotic", "ero", "r18", "18"];
+const NOME18_IGUAL = ["sex", "sexo", "sexy", "nude", "nudes", "nua", "nuas", "erotico", "erotica", "erotic", "ero", "r18"];
 function nomeSuspeito(t) {
   const n = norm(t || "");
   const junto = n.replace(/[^a-z0-9]/g, ""), palavras = n.split(/[^a-z0-9]+/).filter(Boolean);
@@ -1818,6 +1819,7 @@ function openVitrineEdit() {
     <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="button" class="btn primary" id="veSave">Salvar</button></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const ban = root.querySelector("#veBan"), painel = root.querySelector("#vePainel"), rm = root.querySelector("#veRm");
+    setTimeout(() => carregarVerificador().catch(() => {}), 600);
     const showBan = () => {
       ban.style.setProperty("--vt", CORES[d.cor]);
       ban.innerHTML = d.banner ? midiaBanner(d.banner, d.pos) : `<span>Sem capa: fica na cor do perfil</span>`;
@@ -1985,6 +1987,7 @@ function openFotoEdit() {
     <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button type="button" class="btn primary" id="fpSave">Salvar</button></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const prev = root.querySelector("#fpPrev"), painel = root.querySelector("#fpPainel");
+    setTimeout(() => carregarVerificador().catch(() => {}), 600);
     const mostra = () => { prev.innerHTML = avatarHTML(foto, p.apelido, "huge"); root.querySelector("#fpRm").classList.toggle("hidden", !foto); };
     mostra();
     root.querySelector("#fpRm").onclick = () => { foto = ""; mostra(); };
