@@ -1,4 +1,5 @@
 // Estante de Mangás — app (Android/Windows) com Firebase: login por e-mail/senha + Firestore
+import "./abertura.js";   // a abertura aparece antes de tudo, ao abrir o app
 import { initializeApp } from "firebase/app";
 import {
   initializeAuth, indexedDBLocalPersistence, browserLocalPersistence,
@@ -2825,13 +2826,17 @@ function openAparencia() {
         <div class="aparopts" data-k="cols">${APAR[modo].map(n => `<button type="button" class="aparopt" data-v="${n}"><span class="aparmini" style="--n:${Math.min(n, 6)}">${"<i></i>".repeat(Math.min(n, 6))}</span>${n}${n === padrao ? " <small>(padrão)</small>" : ""}</button>`).join("")}</div></div>
       <div class="sect"><div class="secth">Tamanho do texto</div>
         <div class="aparopts" data-k="texto">${Object.entries(APAR.texto).map(([k, v]) => `<button type="button" class="aparopt" data-v="${k}"><span style="font-size:${Math.round(14 * v[1])}px;font-weight:900">Aa</span> ${v[0]}</button>`).join("")}</div></div>
+      <div class="sect"><div class="secth">Abertura ao abrir o app</div>
+        <div class="aparopts" data-k="abertura"><button type="button" class="aparopt" data-v="on">Ligada</button><button type="button" class="aparopt" data-v="off">Desligada</button></div></div>
+      <div class="sect"><div class="secth">Som da abertura</div>
+        <div class="aparopts" data-k="aberturaSom"><button type="button" class="aparopt" data-v="on">Ligado</button><button type="button" class="aparopt" data-v="off">Desligado</button></div></div>
       <div class="sect"><div class="secth">Tema</div>
         <div class="aparopts" data-k="tema">${Object.entries(APAR.tema).map(([k, v]) => `<button type="button" class="aparopt" data-v="${k}">${k === "claro" ? "☀️" : k === "escuro" ? "🌙" : "📱"} ${v}</button>`).join("")}</div></div>
     </div>
     <div class="mfoot"><button type="button" class="btn ghost" id="aparReset">Voltar ao padrão</button><span class="grow"></span><button type="button" class="btn primary" data-x>Pronto</button></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const marca = () => {
-      const atual = { cols: String(apar[chaveCols] || padrao), texto: apar.texto || "normal", tema: apar.tema || "sistema" };
+      const atual = { cols: String(apar[chaveCols] || padrao), texto: apar.texto || "normal", tema: apar.tema || "sistema", abertura: apar.abertura || "on", aberturaSom: apar.aberturaSom || "on" };
       root.querySelectorAll(".aparopts").forEach(g => g.querySelectorAll(".aparopt").forEach(b => b.classList.toggle("on", b.dataset.v === atual[g.dataset.k])));
     };
     root.querySelectorAll(".aparopts").forEach(g => g.querySelectorAll(".aparopt").forEach(b => b.onclick = () => {

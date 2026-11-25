@@ -67,5 +67,7 @@ ipcMain.handle("http", async (_e, req) => {
   } finally { clearTimeout(t); }
 });
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+// deixa o som da abertura tocar sem precisar de um clique antes
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.whenReady().then(() => { Menu.setApplicationMenu(null); createWindow(); });
 app.on("window-all-closed", () => app.quit());
