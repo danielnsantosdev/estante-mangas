@@ -237,6 +237,7 @@ function startSync(uid) {
   try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
   limparLixeira(uid);
   render();
+  talvezTutorial(uid);
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
   }, 8000);
@@ -996,6 +997,7 @@ function openMenu() {
     <div class="mbody">
       <div class="acct"><div><b>${esc(u.email || "Sua conta")}</b><small>${isAdmin(u) ? "👑 Administrador" : "Conta conectada"}</small></div></div>
       <div class="menu-list">
+        <button class="btn" id="mGuia">📖 Guia do app</button>
         ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button><button class="btn" id="mDen">🚩 Denúncias</button>` : ""}
         <button class="btn" id="mLix">🗑️ Lixeira</button>
         <button class="btn" id="mSupport">🛠️ Reportar problema</button>
@@ -1011,6 +1013,7 @@ function openMenu() {
     const ab = root.querySelector("#mAdmin"); if (ab) ab.onclick = openAdmin;
     const rb = root.querySelector("#mReports"); if (rb) rb.onclick = openReports;
     const db2 = root.querySelector("#mDen"); if (db2) db2.onclick = openDenuncias;
+    root.querySelector("#mGuia").onclick = openGuia;
     root.querySelector("#mSupport").onclick = openSupport;
     root.querySelector("#mLix").onclick = openLixeira;
     root.querySelector("#mSenha").onclick = openSenha;
@@ -2141,6 +2144,196 @@ function abrirDenunciaForum(m, sala) {
       catch (x) { sb.disabled = false; toast(x.code === "permission-denied" ? "Você já denunciou esta mensagem." : "Não foi possível enviar agora.", 4000); }
     });
   });
+}
+
+// ---------- Tutorial do primeiro acesso ----------
+// Só para contas criadas a partir do lançamento desta função, com a estante vazia. Fica salvo na conta.
+const TUT_DESDE = Date.parse("2026-11-25T14:00:00Z");
+const TUT_KEY = (uid) => "estante-tutorial-" + uid;
+async function talvezTutorial(uid) {
+  try { if (localStorage.getItem(TUT_KEY(uid))) return; } catch (e) {}
+  if (membroDesdeAuth() < TUT_DESDE) return;
+  try { const d = await getDoc(doc(db, "users", uid, "config", "tutorial")); if (d.exists()) { try { localStorage.setItem(TUT_KEY(uid), "1"); } catch (e) {} return; } } catch (e) { return; }
+  // espera a estante carregar e a abertura terminar
+  await new Promise(r => setTimeout(r, 1500));
+  for (let i = 0; i < 40 && document.getElementById("abertura"); i++) await new Promise(r => setTimeout(r, 150));
+  if (!currentUser || currentUser.uid !== uid || items.size || $("#bd").classList.contains("open")) return;
+  iniciarTutorial(false);
+}
+function marcarTutorialVisto() {
+  if (!currentUser) return;
+  try { localStorage.setItem(TUT_KEY(currentUser.uid), "1"); } catch (e) {}
+  setDoc(doc(db, "users", currentUser.uid, "config", "tutorial"), { visto: true }).catch(() => {});
+}
+const espera = (ms) => new Promise(r => setTimeout(r, ms));
+async function esperaEl(sel, ms = 9000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { const e = document.querySelector(sel); if (e) return e; await espera(120); } return null; }
+const ICO_TUT = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 6q-4-2-8-1v13q4-1 8 1q4-2 8-1V5q-4-1-8 1z"/><path d="M12 6v13"/></svg>`;
+const tic = (t, cls = "") => `<span class="tic ${cls}">${t}</span>`;
+function cardDoExemplo() {
+  const cards = [...document.querySelectorAll("#grid .card")];
+  return cards.find(c => /one piece/i.test(c.textContent)) || cards[0] || null;
+}
+function uniao(els) {
+  const rs = els.filter(Boolean).map(e => e.getBoundingClientRect()); if (!rs.length) return null;
+  const x = Math.min(...rs.map(r => r.left)), y = Math.min(...rs.map(r => r.top)), x2 = Math.max(...rs.map(r => r.right)), y2 = Math.max(...rs.map(r => r.bottom));
+  return { left: x, top: y, width: x2 - x, height: y2 - y };
+}
+function iniciarTutorial(rever) {
+  if (document.getElementById("tut")) return;
+  closeModal();
+  let passo = 0, fase2 = false, timers = [], acabou = false, criouExemplo = false;
+  const PASSOS = [
+    { t: "Bem-vindo à Estante de Mangás!", p: "Em 1 minuto você conhece o essencial. Dá para pular quando quiser." },
+    { alvo: () => $("#addBtn"), t: "Adicione seus mangás", p: "Toque aqui para adicionar um mangá à sua estante.",
+      prox: async () => {
+        openEditor();
+        const q = await esperaEl("#catQ", 3000); if (!q) return;
+        q.value = "One Piece"; const go = document.querySelector("#catGo"); if (go) go.click();
+        await esperaEl("#catRes .catitem", 9000);
+      } },
+    { alvo: () => document.querySelector("#catBox"), t: "Encontre no catálogo", p: "Encontre seu mangá no catálogo: digite o nome e toque no resultado.",
+      prox: async () => {
+        const r = document.querySelector("#catRes .catitem");
+        if (r) { r.click(); for (let i = 0; i < 80 && !/vinculado/.test(($("#catStatus") || {}).textContent || ""); i++) await espera(150); }
+        const ch = document.querySelector('#ed [name="chapter"]'); if (ch && !ch.value) ch.value = "1";
+        const st = document.querySelector('#ed [name="status"]'); if (st) st.scrollIntoView({ block: "center" });
+        await espera(250);
+      } },
+    { alvo: () => uniao([document.querySelector('#ed [name="chapter"]'), document.querySelector('#ed [name="status"]'), document.querySelector('#ed [name="link"]')]), margem: 10,
+      t: "Ajuste sua leitura", p: "Diga em que capítulo você está e escolha o status do seu mangá. Se quiser, cole o link do site onde você lê. Depois, toque em Salvar.", lista: true,
+      prox: async () => {
+        const f = document.querySelector("#ed");
+        const jaTem = [...items.values()].some(it => /one piece/i.test(it.title));
+        if (f && !jaTem) { criouExemplo = true; f.requestSubmit(); await esperaEl("#grid .card", 4000); await espera(500); }
+        else closeModal();
+        await espera(200);
+      } },
+    { alvo: () => cardDoExemplo(), t: "Seu card de leitura", icones: true,
+      ul: [tic("−") + "volta um capítulo", tic("+", "pl") + "avança um capítulo", tic("1", "num") + "toque no número para digitar o capítulo", tic("Ler ↗", "ler") + "abre o site onde você lê",
+        tic("i", "inf") + "detalhes, sinopse e sua nota", tic("✎") + "edita o mangá", tic(ICO_TUT) + "deixa este mangá privado: só você vê, mesmo com perfil público"] },
+    { alvo: () => $("#bellBtn"), mostraSino: true, t: "Novidades", p: "O sino avisa quando sai capítulo novo e quando alguém menciona você no fórum." },
+    { alvo: () => $("#peopleBtn"), t: "Social", ul: ["<b>Meu perfil</b>: sua vitrine, foto e favoritos", "<b>Comunidade</b>: visite estantes de outros leitores", "<b>Ranking</b> e <b>Fórum</b>"] },
+    { alvo: () => $("#peopleBtn"), t: "Sua estante pública", p: "Sua estante é pública: outros leitores podem visitá-la e se inspirar. Prefere só para você? Em Social › Meu perfil, feche o perfil quando quiser." },
+    { alvo: () => $("#menuBtn"), t: "Menu", p: "Toque no ☰ para abrir o menu.",
+      depois: { alvo: () => uniao([...document.querySelectorAll("#modal .acct, #modal .menu-list .btn")].filter(b => b.classList.contains("acct") || /Guia|Lixeira|Reportar|senha|backup/i.test(b.textContent))), t: "Menu", p: "Aqui ficam sua conta, a lixeira, os backups e o Guia do app, com tudo explicado para quando precisar.", fim: true },
+      abrir: () => openMenu() },
+  ];
+  const raiz = document.createElement("div"); raiz.id = "tut";
+  raiz.innerHTML = `<div class="tut-bloq"></div><div class="tut-foco"></div><div class="tut-bal" role="dialog" aria-live="polite"></div>`;
+  document.documentElement.appendChild(raiz);
+  const foco = raiz.querySelector(".tut-foco"), bal = raiz.querySelector(".tut-bal");
+  const limpa = () => { timers.forEach(clearTimeout); timers = []; raiz.querySelectorAll(".tut-toque,.tut-lista").forEach(x => x.remove()); };
+  const fecha = (msg, ms) => {
+    if (acabou) return; acabou = true; limpa(); raiz.remove(); window.removeEventListener("resize", posiciona); window.removeEventListener("scroll", posiciona, true);
+    if ($("#bd").classList.contains("open") && (document.querySelector("#ed") || document.querySelector("#mGuia"))) closeModal();
+    updateBell(); marcarTutorialVisto();
+    if (msg) setTimeout(() => toast(msg, ms), 250);
+  };
+  function posiciona() {
+    if (acabou) return;
+    const P = fase2 ? PASSOS[passo].depois : PASSOS[passo];
+    const W = window.innerWidth, H = window.innerHeight, pc = W >= 1100;
+    const seta = bal.querySelector(".tut-seta");
+    const el = P.alvo ? P.alvo() : null;
+    const r = el ? (el.getBoundingClientRect ? el.getBoundingClientRect() : el) : null;
+    if (!r || !r.width) { foco.className = "tut-foco centro"; foco.style.cssText = `left:${W / 2}px;top:${H / 2}px`; bal.style.left = (W - bal.offsetWidth) / 2 + "px"; bal.style.top = Math.max(16, (H - bal.offsetHeight) / 2) + "px"; if (seta) seta.style.display = "none"; return; }
+    const m = P.margem || 8, x = r.left, y = r.top, w = r.width, h = r.height;
+    foco.className = "tut-foco"; foco.style.cssText = `left:${x - m}px;top:${y - m}px;width:${w + 2 * m}px;height:${h + 2 * m}px`;
+    const bw = bal.offsetWidth, bh = bal.offsetHeight; let bx, by;
+    const cabeLado = x + w + m + 24 + bw < W || x - m - 24 - bw > 0;
+    if (pc && cabeLado) {
+      const dir = x + w + m + 24 + bw < W;
+      bx = dir ? x + w + m + 24 : x - m - 24 - bw; by = Math.max(16, Math.min(H - bh - 16, y + h / 2 - bh / 2));
+      const sy = Math.max(16, Math.min(bh - 30, y + h / 2 - by - 7));
+      seta.style.cssText = dir ? `left:-9px;top:${sy}px;transform:rotate(-45deg)` : `right:-9px;top:${sy}px;transform:rotate(135deg)`;
+    } else {
+      const embaixo = y + h + m + 16 + bh < H - 10;
+      bx = Math.max(10, Math.min(W - bw - 10, x + w / 2 - bw / 2)); by = embaixo ? y + h + m + 16 : Math.max(10, y - m - 16 - bh);
+      const sx = Math.max(16, Math.min(bw - 30, x + w / 2 - bx - 7));
+      seta.style.cssText = embaixo ? `top:-9px;left:${sx}px` : `bottom:-9px;left:${sx}px;transform:rotate(225deg)`;
+    }
+    bal.style.left = bx + "px"; bal.style.top = by + "px";
+    const L = raiz.querySelector(".tut-lista"), sel = document.querySelector('#ed [name="status"]');
+    if (L && sel) { const rs = sel.getBoundingClientRect(); L.style.cssText = `left:${rs.left}px;top:${rs.bottom + 4}px;width:${rs.width}px`; }
+  }
+  function mostra(f2) {
+    limpa(); fase2 = !!f2;
+    const base = PASSOS[passo], P = fase2 ? base.depois : base;
+    if (base.mostraSino) $("#bellBtn").classList.remove("hidden"); else updateBell();
+    const fim = P.fim || (!base.depois && passo === PASSOS.length - 1);
+    bal.innerHTML = `<div class="tut-pas">Passo ${passo + 1} de ${PASSOS.length}</div><h3>${P.t}</h3>${P.p ? `<p>${P.p}</p>` : ""}${P.ul ? `<ul class="${P.icones ? "icones" : ""}">${P.ul.map(x => `<li>${x}</li>`).join("")}</ul>` : ""}
+      <div class="tut-barra">${PASSOS.map((_, i) => `<i class="${i <= passo ? "on" : ""}"></i>`).join("")}</div>
+      <div class="tut-acoes">${fim ? "" : `<button type="button" class="tut-pular" data-t="pular">Pular tutorial</button>`}${passo ? `<button type="button" class="tut-bt" data-t="volta">Voltar</button>` : ""}<button type="button" class="tut-bt pri" data-t="prox">${fim ? "Começar" : passo ? "Próximo" : "Vamos lá"}</button></div><span class="tut-seta"></span>`;
+    if (P.lista) { const L = document.createElement("div"); L.className = "tut-lista"; L.innerHTML = Object.entries(STATUS).map(([k, v], i) => `<div class="s-${k} ${i ? "" : "on"}"><i></i>${v.label}</div>`).join(""); raiz.appendChild(L); }
+    posiciona(); setTimeout(posiciona, 60); setTimeout(posiciona, 450);
+    if (base.depois && !fase2) {
+      timers.push(setTimeout(() => {
+        const el = P.alvo(); if (!el) return; const r = el.getBoundingClientRect();
+        const t = document.createElement("span"); t.className = "tut-toque"; t.style.left = (r.left + r.width / 2) + "px"; t.style.top = (r.top + r.height / 2) + "px"; raiz.appendChild(t);
+        timers.push(setTimeout(() => abreDepois(), 650));
+      }, 1600));
+    }
+  }
+  async function abreDepois() { limpa(); const base = PASSOS[passo]; if (base.abrir) base.abrir(); await espera(350); mostra(true); }
+  let ocupado = false;
+  bal.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-t]"); if (!b || ocupado) return;
+    const a = b.dataset.t, base = PASSOS[passo];
+    if (a === "pular") { fecha("Se precisar, o Guia do app fica no menu ☰.", 5000); return; }
+    if (a === "volta") {
+      if (fase2) { closeModal(); mostra(false); return; }
+      // voltar não desfaz o que já foi feito: só mostra o passo anterior
+      passo = Math.max(0, passo - 1); mostra(false); return;
+    }
+    if (base.depois && !fase2) { abreDepois(); return; }
+    if (fase2 || passo === PASSOS.length - 1) { fecha("Tudo pronto! Boa leitura.", 4000); return; }
+    ocupado = true; b.disabled = true; b.textContent = "…";
+    try { if (base.prox) await base.prox(); } catch (x) {}
+    ocupado = false; if (acabou) return;
+    passo++; mostra(false);
+  });
+  window.addEventListener("resize", posiciona); window.addEventListener("scroll", posiciona, true);
+  mostra(false);
+}
+
+// ---------- Guia do app (menu ☰) ----------
+const GUIA = [
+  ["Adicionar e editar mangá", "adicionar", "<ol><li>Toque em <b>+ Adicionar</b>.</li><li>Escreva o nome e escolha a obra no catálogo.</li><li>Ajuste capítulo, status e link e salve. Para editar depois, toque no ✎ do card.</li></ol>"],
+  ["Capítulos e status", "card", "<ol><li>Use <b>−</b> e <b>+</b> para mudar o capítulo, ou toque no número para digitar.</li><li>O status (Lendo, Na fila, Pausado, Concluído) muda no editor.</li></ol>"],
+  ["Nota e comentário", "nota", "<ol><li>No editor, dê uma nota de 0 a 10 e escreva um comentário curto.</li><li>As notas entram no ranking “Os mais bem avaliados”.</li></ol>"],
+  ["Link e capítulo novo", "sino", "<ol><li>Coloque no editor o link do site onde você lê.</li><li>O app confere o site e o sino avisa quando sai capítulo novo.</li></ol>"],
+  ["Catálogo", "info", "<ol><li>Ao escolher a obra no catálogo, vêm capa, nomes, gêneros e sinopse.</li><li>Toque no <b>ⓘ</b> do card para ver tudo.</li></ol>"],
+  ["Vitrine e foto de perfil", "perfil", "<ol><li>Em Social › <b>Meu perfil</b>, toque em Editar vitrine.</li><li>Escolha capa (imagem ou GIF), cor, bio e até 3 favoritos.</li></ol>"],
+  ["Comunidade e visitas", "comunidade", "<ol><li>Em Social › <b>Comunidade</b>, veja os leitores.</li><li>Toque em alguém para visitar a estante e adicionar mangás dela à sua.</li></ol>"],
+  ["Ranking", "ranking", "<ol><li>Em Social › <b>Ranking</b>: Todos os tempos, Em alta, Esta semana, Este mês e Por gênero.</li><li><b>Para você</b> traz sugestões pelo que você lê.</li></ol>"],
+  ["Privacidade", "privacidade", "<ol><li>O ícone de mangá no card deixa aquele mangá privado: só você vê.</li><li>Em Meu perfil, escolha estante pública ou fechada.</li></ol>"],
+  ["Fórum e regras", "forum", "<ol><li>Em Social › <b>Fórum</b>: salas Geral, Recomendações e Spoilers.</li><li>Use Spoiler para cobrir revelações. As mensagens somem em 7 dias.</li></ol>"],
+  ["Aparência", "aparencia", "<ol><li>No botão de quadradinhos ao lado dos filtros.</li><li>Escolha cards por linha, tamanho do texto, tema e a abertura do app.</li></ol>"],
+  ["Lixeira", "lixeira", "<ol><li>No menu ☰ › <b>Lixeira</b>.</li><li>O que você apagou fica lá e pode ser restaurado.</li></ol>"],
+  ["Conta (senha, excluir)", "menu", "<ol><li>No menu ☰: <b>Trocar senha</b> e <b>Excluir minha conta</b>.</li><li>Excluir apaga a conta e todos os seus dados.</li></ol>"],
+  ["Instalar e atualizar", "menu", "<ol><li>O app se atualiza sozinho ao abrir.</li><li>Quando sai uma versão nova para baixar, aparece um aviso no topo.</li></ol>"],
+];
+function openGuia() {
+  openModal(`
+    <div class="mhead"><h2>Guia do app</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody guia">
+      <div class="gtop"><label class="gbusca"><input id="gq" type="search" placeholder="Busque: como trocar a capa?" autocomplete="off"></label><button type="button" class="btn primary" id="gRever">Rever o tutorial</button></div>
+      <div class="secth">Tópicos</div>
+      <div class="glista">${GUIA.map(([t, img, tx], i) => `<div class="git" data-i="${i}"><button type="button" class="gith"><span class="gn">${i + 1}</span>${esc(t)}<span class="gch">▾</span></button>
+        <div class="gcont"><div class="gimg"><img data-src="guia/${img}.webp" alt=""></div><div class="gtxt">${tx}</div></div></div>`).join("")}</div>
+      <p class="hint" id="gVazio" style="display:none;text-align:center">Nada encontrado. Tente outra palavra.</p>
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const abre = (it, sim) => { it.classList.toggle("aberto", sim); const im = it.querySelector("img[data-src]"); if (sim && im) { im.src = im.dataset.src; im.removeAttribute("data-src"); } };
+    root.querySelectorAll(".gith").forEach(b => b.onclick = () => { const it = b.parentElement; abre(it, !it.classList.contains("aberto")); });
+    const q = root.querySelector("#gq");
+    q.oninput = () => {
+      const t = norm(q.value.trim()); let n = 0;
+      root.querySelectorAll(".git").forEach(it => { const ok = !t || norm(it.textContent).includes(t); it.style.display = ok ? "" : "none"; if (ok) { n++; if (t) abre(it, true); } });
+      root.querySelector("#gVazio").style.display = n ? "none" : "";
+    };
+    root.querySelector("#gRever").onclick = () => { closeModal(); setTimeout(() => iniciarTutorial(true), 200); };
+  }, { wide: true });
 }
 
 // ---------- vitrine do perfil ----------

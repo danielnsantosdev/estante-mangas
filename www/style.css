@@ -745,3 +745,61 @@ ol.regras{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;
   .facoes button{padding:3px 6px}
 }
 @media (max-width:520px){ .ctabs .chip{font-size:12px;padding:6px 4px} }
+
+/* ---------- Tutorial do primeiro acesso ---------- */
+#tut{position:fixed;inset:0;z-index:9000;font-family:Inter,system-ui,sans-serif;color:#141414}
+#tut .tut-bloq{position:absolute;inset:0}
+#tut .tut-foco{position:fixed;border-radius:14px;box-shadow:0 0 0 9999px rgba(10,10,12,.62);transition:all .35s cubic-bezier(.3,.8,.3,1);pointer-events:none}
+#tut .tut-foco::after{content:"";position:absolute;inset:-5px;border-radius:18px;border:2.5px solid #fffdf8;animation:tutpulsa 1.6s ease-in-out infinite}
+#tut .tut-foco.centro{width:0;height:0}
+#tut .tut-foco.centro::after{display:none}
+@keyframes tutpulsa{50%{inset:-9px;opacity:.35}}
+#tut .tut-bal{position:fixed;background:#fffdf8;border:2px solid #141414;border-radius:14px;box-shadow:5px 5px 0 #141414;padding:16px 16px 14px;width:min(320px,calc(100vw - 20px));transition:top .35s,left .35s}
+#tut .tut-pas{font-size:11px;font-weight:700;color:#6d675d;text-transform:uppercase;letter-spacing:1.6px}
+#tut h3{margin:4px 0 6px;font-size:17px}
+#tut p{margin:0;font-size:13.5px;line-height:1.5}
+#tut ul{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.5}
+#tut ul.icones{list-style:none;padding:0}
+#tut li{margin-bottom:5px}
+#tut .tic{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;padding:0 6px;margin-right:8px;border:1.5px solid #141414;border-radius:7px;font-weight:800;font-size:12px;background:#fffdf8;vertical-align:1px}
+#tut .tic.pl{background:#e0312b;color:#fff;border-color:#e0312b}
+#tut .tic.num{font-family:Bangers,Impact,sans-serif;font-weight:400;font-size:14px}
+#tut .tic.ler{background:#141414;color:#f4efe5;border-radius:999px}
+#tut .tic.inf{border-radius:50%;min-width:22px;padding:0;font-style:italic;font-family:Georgia,serif}
+#tut .tut-barra{display:flex;gap:4px;margin:12px 0 10px}
+#tut .tut-barra i{flex:1;height:3px;border-radius:2px;background:#e9e2d4}
+#tut .tut-barra i.on{background:#141414}
+#tut .tut-acoes{display:flex;align-items:center;gap:8px}
+#tut .tut-pular{border:0;background:none;color:#6d675d;font-size:12.5px;font-weight:600;text-decoration:underline;padding:0;margin-right:auto;cursor:pointer}
+#tut .tut-bt{border:2px solid #141414;background:#fffdf8;color:#141414;border-radius:999px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer;margin-left:auto}
+#tut .tut-bt + .tut-bt{margin-left:0}
+#tut .tut-pular + .tut-bt{margin-left:0}
+#tut .tut-bt.pri{background:#141414;color:#f4efe5}
+#tut .tut-seta{position:absolute;width:14px;height:14px;background:#fffdf8;border-left:2px solid #141414;border-top:2px solid #141414;transform:rotate(45deg)}
+#tut .tut-lista{position:fixed;background:#fff;border:1.5px solid #141414;border-radius:10px;box-shadow:3px 3px 0 #141414;overflow:hidden;font-size:15px;font-weight:600;pointer-events:none}
+#tut .tut-lista div{display:flex;align-items:center;gap:10px;padding:9px 12px}
+#tut .tut-lista div.on{background:#e9e2d4}
+#tut .tut-lista i{width:10px;height:10px;border-radius:50%;display:block}
+#tut .tut-toque{position:fixed;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 0 0 3px #e0312b;animation:tuttoque .6s ease-out forwards;pointer-events:none}
+@keyframes tuttoque{0%{transform:scale(.4);opacity:1}60%{transform:scale(1.1)}100%{transform:scale(2.4);opacity:0}}
+@media (min-width:1100px){ #tut .tut-bal{width:380px;padding:20px 22px 18px} #tut h3{font-size:20px} #tut p{font-size:15px} #tut ul{font-size:14.5px} }
+
+/* ---------- Guia do app ---------- */
+.mbody.guia{display:flex;flex-direction:column;gap:10px}
+.guia .gtop{display:flex;gap:8px;flex-wrap:wrap}
+.guia .gbusca{flex:1;min-width:180px;display:flex;align-items:center;border:1.5px solid var(--ink);border-radius:999px;padding:0 14px;background:var(--paper)}
+.guia .gbusca input{border:0;background:none;outline:none;padding:9px 0;width:100%;font-size:14px;color:inherit;box-shadow:none;min-height:0}
+.guia .glista{display:flex;flex-direction:column;gap:8px}
+.guia .git{border:1.5px solid var(--ink);border-radius:12px;background:var(--paper);overflow:hidden}
+.guia .gith{width:100%;display:flex;align-items:center;gap:10px;border:0!important;background:none;padding:12px 14px;text-align:left;font-weight:700;font-size:14.5px;color:inherit;cursor:pointer;box-shadow:none;border-radius:0}
+.guia .gn{font-family:Bangers,Impact,sans-serif;font-weight:400;font-size:17px;color:var(--muted);width:22px}
+.guia .gch{margin-left:auto;transition:transform .2s;font-size:12px}
+.guia .git.aberto .gch{transform:rotate(180deg)}
+.guia .gcont{display:none;padding:0 14px 14px;gap:14px}
+.guia .git.aberto .gcont{display:grid;grid-template-columns:1fr}
+.guia .gimg{border:1.5px solid var(--ink);border-radius:10px;overflow:hidden;max-height:240px;background:#fff}
+.guia .gimg img{width:100%;display:block;object-fit:cover;object-position:top}
+.guia .gtxt{font-size:13.5px;line-height:1.55}
+.guia .gtxt ol{margin:0;padding-left:18px}
+.guia .gtxt li{margin-bottom:4px}
+@media (min-width:760px){ .guia .git.aberto .gcont{grid-template-columns:260px 1fr;align-items:start} .guia .gtxt{font-size:15px} .guia .gimg{max-height:280px} }

@@ -278,7 +278,9 @@ service cloud.firestore {
     // preferências do fórum (Não perturbe)
     match /users/{uid}/config/{id} {
       allow read: if dono(uid);
-      allow write: if dono(uid) && request.resource.data.keys().hasOnly(['dnd']) && request.resource.data.dnd is bool;
+      allow write: if dono(uid) && (
+        (id == 'forum' && request.resource.data.keys().hasOnly(['dnd']) && request.resource.data.dnd is bool)
+        || (id == 'tutorial' && request.resource.data.keys().hasOnly(['visto']) && request.resource.data.visto is bool));
     }
 
     // Qualquer outra coisa: bloqueado.
