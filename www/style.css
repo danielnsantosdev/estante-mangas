@@ -414,20 +414,6 @@ a.btn{color:inherit;text-decoration:none}
   .vitrine .vtrow{font-size:15px}
   .vitrine .vtrc{width:46px;height:64px}
 
-  /* ranking em três colunas */
-  #rk{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:start}
-  #rk .rkhead,#rk .rknote,#rk > .hint,#rk > .err{grid-column:1 / -1}
-  #rk .rkhead{font-size:32px}
-  #rk .sect{border:var(--line);border-radius:14px;padding:16px 18px;background:var(--card);box-shadow:3px 3px 0 var(--ink)}
-  #rk .secth{font-size:15px}
-  #rk .rkrow{padding:8px 12px;gap:14px;border-width:0 0 1px;border-radius:0;background:none}
-  #rk .rkpos{font-size:28px;width:30px}
-  #rk .rkcapa{width:56px;height:80px}
-  #rk .rkav .av{width:56px;height:56px}
-  #rk .rkt b{font-size:17px;white-space:normal}
-  #rk .rkt small{font-size:13px}
-  #rk .rkm{font-size:15px}
-
   /* comunidade: pessoas em grade, 4 por linha */
   .modal.wide #plist{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
   .modal.wide .search{height:52px!important;flex:none;font-size:17px}
@@ -573,3 +559,84 @@ label.chk span{display:inline-flex;align-items:center;gap:6px}
 @media (max-width:520px){ .foot .when{display:none} }
 /* denúncia */
 .denbtn{color:var(--red);font-size:13px;min-height:34px;align-self:center}
+
+/* ---------- Ranking (Todos os tempos · Em alta · Esta semana · Este mês · Para você) ---------- */
+#rk{display:flex;flex-direction:column;gap:12px}
+#rk > *{flex:none}
+.rkbar{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 2px 4px;margin:0 -2px}
+.rkbar::-webkit-scrollbar{display:none}
+.rkbar .chip{font-size:12.5px;padding:6px 13px;border-width:1.5px;font-weight:600;flex:none}
+.rkbar .chip.on{font-weight:700}
+.rkbar .chip.pv{border-color:#7c3aed;color:#7c3aed}
+.rkbar .chip.pv.on{background:#7c3aed;color:#fff}
+.rkconteudo{display:flex;flex-direction:column;gap:12px}
+.rkcap{font-size:12px;color:var(--muted);font-weight:500;margin:2px 0 -4px}
+.rkvazio{font-size:13px;color:var(--muted);text-align:center;padding:28px 10px;margin:0}
+.rknote{font-size:11.5px;color:var(--muted);text-align:center;margin:2px 0 0}
+.rkcols{display:flex;flex-direction:column;gap:14px}
+.rktab{border:var(--line);border-radius:12px;background:var(--paper);overflow:hidden}
+.rkth{height:44px;padding:0 14px;display:flex;align-items:center;background:#141414;color:#f4efe5;border-bottom:var(--line);text-transform:uppercase;font-size:12.5px;letter-spacing:2px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rkl{display:flex;align-items:center;gap:10px;padding:8px 10px;border:0;border-bottom:1px solid var(--soft);background:none;width:100%;text-align:left;color:inherit;font:inherit}
+.rkl:last-child{border-bottom:0}
+button.rkl{cursor:pointer}
+.rkpos{font-family:Bangers,Impact,sans-serif;font-size:22px;width:24px;text-align:center;flex:none;color:var(--muted)}
+.rkpos.p1{color:#b8860b}.rkpos.p2{color:#7d838c}.rkpos.p3{color:#a9582a}
+.rkc{flex:none;border:1.5px solid var(--ink);border-radius:5px;overflow:hidden;background:var(--soft);position:relative;cursor:pointer;display:block;width:40px;height:56px}
+.rkc img{width:100%;height:100%;object-fit:cover;display:block}
+.rkc i{position:absolute;inset:0;display:grid;place-items:center;font-style:normal;font-weight:800;color:var(--muted)}
+.rkt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rkt b{font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rkt small{font-size:11.5px;color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rkmet{font-size:11.5px;font-weight:500;color:var(--muted)}
+.rkmet b{color:var(--ink);font-size:12.5px}
+.rkacts{display:flex;gap:5px;margin-top:4px}
+.rkacts .mini,.pvacts .mini{border:1.5px solid var(--ink);background:var(--card);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:600;white-space:nowrap;min-height:0;height:auto;box-shadow:none}
+.mini.rkadd{background:var(--ink);color:var(--paper)}
+.mini.rktem{background:none!important;border-color:var(--c-lendo)!important;color:var(--c-lendo);display:inline-flex;align-items:center}
+.rkav .av{width:38px;height:38px}
+.rkvoce{font-size:10.5px;font-weight:700;border:1.5px solid var(--ink);border-radius:999px;padding:0 6px;margin-left:5px;background:#fde68a;color:#141414;vertical-align:1px}
+/* grade de cards */
+.rkgrade{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rkcard{border:var(--line);border-radius:12px;background:var(--paper);padding:8px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.rkcard .rkc.g{width:100%;height:auto;aspect-ratio:3/4;border-radius:7px}
+.rkcard b{font-size:13px;line-height:1.25;font-weight:700;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.rkn{position:absolute;top:6px;left:6px;min-width:24px;height:24px;padding:0 6px;border-radius:999px;background:var(--card);border:1.5px solid var(--ink);display:grid;place-items:center;font-family:Bangers,Impact,sans-serif;font-size:15px;line-height:1;color:var(--ink)}
+.rkn.p1{background:#f3d27a;color:#141414}.rkn.p2{background:#d9dde2;color:#141414}.rkn.p3{background:#e6b48f;color:#141414}
+.pvacts{display:flex;flex-direction:column;gap:5px;margin-top:auto}
+.pvacts .mini{text-align:center;padding:5px;justify-content:center}
+.mini.pvnao{border-color:var(--soft);color:var(--muted)}
+.rkcard.sai{animation:rksai .22s ease forwards}
+.rkcard.entra{animation:rkentra .3s ease}
+@keyframes rksai{to{opacity:0;transform:scale(.94)}}
+@keyframes rkentra{from{opacity:0;transform:scale(.94)}}
+/* janelinha (Quem lê, ⓘ da obra) por cima do Social */
+.rkfolha{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.35);display:grid;place-items:center;padding:16px}
+.rkfolha .folha{width:min(460px,100%);max-height:calc(85vh / var(--z,1));display:flex;flex-direction:column}
+.rkfolha .mbody{overflow:auto}
+.rkfolha .fh{font-family:Inter,system-ui,sans-serif;font-size:17px;letter-spacing:0;font-weight:700}
+.rkq{display:flex;align-items:center;gap:10px;border:1.5px solid var(--ink);border-radius:10px;padding:8px 10px;background:var(--paper);width:100%;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.rkst{font-size:11px;font-weight:700;border-radius:999px;padding:2px 9px;color:#fff;flex:none}
+.obra{display:flex;gap:14px;align-items:flex-start}
+.obra .rkc.o{width:96px;height:134px;border-radius:8px;cursor:default}
+.obrainfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.obrainfo .sinopse p{margin:0;font-size:13.5px;line-height:1.5;white-space:pre-line}
+.obraacts{display:flex;flex-direction:column}
+@media (max-width:520px){ .obra{flex-direction:column;align-items:center} .obra .rkc.o{width:120px;height:168px} .rkfolha{place-items:end center;padding:0} .rkfolha .folha{border-radius:14px 14px 0 0;width:100%} }
+@media (min-width:521px) and (max-width:1099px){ .rkgrade{grid-template-columns:repeat(4,minmax(0,1fr))} }
+@media (min-width:1100px){
+  .rkbar{justify-content:center;flex-wrap:wrap}
+  .rkbar .chip{font-size:14px;padding:7px 18px}
+  .rkcap{font-size:13px}
+  .rkcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;align-items:start}
+  .rkth{height:50px;font-size:14px;letter-spacing:2.4px;padding:0 16px}
+  .rkl.m{height:94px}
+  .rkl.l{height:62.6px}   /* 15 leitores = mesma altura de 10 mangás */
+  .rkl .rkc{width:52px;height:74px}
+  .rkt b{font-size:15px}
+  .rkav .av{width:44px;height:44px}
+  .rkacts .mini{font-size:12px;padding:3px 12px}
+  .rkgrade{grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;max-width:960px;width:100%;margin:0 auto}
+  .rkconteudo > .rkcap{max-width:100%}
+  .rkgrade ~ .rkcap,.rkconteudo .rkcap:has(+ .rkgrade){max-width:960px;width:100%;margin-left:auto;margin-right:auto}
+  .rkcard b{font-size:14px}
+}

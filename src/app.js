@@ -1565,35 +1565,284 @@ function montarPessoas(root) {
   pq.addEventListener("input", draw);
   plist.addEventListener("click", (e) => { const b = e.target.closest("[data-uid]"); if (b) { const x = perfis.find(y => y.uid === b.dataset.uid); openVisit(b.dataset.uid, b.dataset.ap, x && x.foto); } });
 }
+// ---------- Ranking: Todos os tempos · Em alta · Esta semana · Este mês · Por gênero · Para você ----------
+const RK_FILTROS = [["todos", "Todos os tempos"], ["alta", "Em alta"], ["semana", "Esta semana"], ["mes", "Este mês"], ["genero", "Por gênero"], ["pv", "✨ Para você"]];
+const rkEstado = { f: "todos", barra: 0 };   // continua onde você parou ao voltar para o Ranking
+const rkPC = () => matchMedia("(min-width:1100px)").matches;
+const chaveQuem = (k) => String(k || "").replace(/[.\/\[\]*`~]/g, "_");
+const naEstante = (x) => [...items.values()].some(it => (x.catId && it.catId === x.catId) || norm(it.title) === norm(x.titulo));
+const rkCapaCache = {};
+function rkCapa(x, cls = "") {
+  const c = String(x.capa || "");
+  if (c.startsWith("rkcapa:")) return `<span class="rkc ${cls}" data-obra="1"><img alt="" data-rkc="${esc(c.slice(7))}" ${rkCapaCache[c.slice(7)] ? `src="${esc(rkCapaCache[c.slice(7)])}"` : ""}></span>`;
+  return `<span class="rkc ${cls}" data-obra="1">${c ? `<img src="${esc(c)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<i>${esc((x.titulo || "?").slice(0, 1))}</i>`}</span>`;
+}
+function rkCarregaCapas(box) {
+  box.querySelectorAll("img[data-rkc]:not([src])").forEach(im => {
+    const id = im.dataset.rkc;
+    getDoc(doc(db, "rkcapas", id)).then(d => { const c = d.exists() ? (d.data() || {}).capa : ""; if (c) { rkCapaCache[id] = c; im.src = c; } }).catch(() => {});
+  });
+}
+// janelinha por cima do Social (Quem lê, ⓘ da obra), sem fechar o Ranking
+function abrirFolha(html, onMount) {
+  fecharFolha();
+  const f = document.createElement("div"); f.className = "rkfolha"; f.innerHTML = `<div class="modal folha">${html}</div>`;
+  document.body.appendChild(f);
+  f.addEventListener("click", (e) => { if (e.target === f || e.target.closest("[data-fx]")) fecharFolha(); });
+  if (onMount) onMount(f.querySelector(".folha"));
+}
+function fecharFolha() { document.querySelectorAll(".rkfolha").forEach(x => x.remove()); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.querySelector(".rkfolha")) { e.stopImmediatePropagation(); fecharFolha(); } }, true);
+
 async function montarRanking(root) {
   const box = root.querySelector("#rk");
-  let r;
-  try { const d = await getDoc(doc(db, "ranking", "atual")); r = d.exists() ? d.data() : null; }
-  catch (e) { box.innerHTML = `<div class="err">Não consegui carregar o ranking agora.</div>`; return; }
-  if (!box.isConnected) return;
-  const aviso = `<p class="rknote">Ranking feito apenas com perfis públicos.</p>`;
-  if (!r) { box.innerHTML = `<p class="hint">O primeiro ranking sai no dia 1º do próximo mês.</p>${aviso}`; return; }
-  const capa = (x) => x.capa ? `<img class="rkcapa" src="${esc(x.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="rkcapa nocapa">${esc((x.titulo || "?").slice(0, 1))}</span>`;
-  const obra = (x, i, metrica) => `<div class="rkrow"><span class="rkpos">${i + 1}</span>${capa(x)}<span class="rkt"><b>${esc(x.titulo)}</b>${x.titulo2 ? `<small>${esc(x.titulo2)}</small>` : ""}</span><span class="rkm">${metrica}</span></div>`;
-  const lista = (arr, f) => (arr && arr.length) ? arr.map(f).join("") : `<p class="hint">Ainda sem dados suficientes.</p>`;
-  box.innerHTML = `
-    <div class="rkhead">🏆 Ranking de ${esc(nomeMes(r.mes))}</div>
-    <div class="sect"><div class="secth">📚 Mais lidos</div>${lista(r.maisLidos, (x, i) => obra(x, i, ""))}</div>
-    <div class="sect"><div class="secth">⭐ Mais bem avaliados</div>${lista(r.melhores, (x, i) => obra(x, i, `⭐ ${fmtNota(x.media)}<small>${x.notas} notas</small>`))}</div>
-    <div class="sect"><div class="secth">🏅 Top 10 leitores</div>${lista(r.leitores, (x, i) => `<button class="rkrow pbtn" data-uid="${esc(x.uid)}" data-ap="${esc(x.apelido)}"><span class="rkpos">${i + 1}</span><span class="rkav" data-av="${esc(x.uid)}">${avatarHTML("", x.apelido)}</span><span class="rkt"><b data-ap-of="${esc(x.uid)}">@${esc(x.apelido)}</b></span><span class="rkm">${x.lidos} ${x.lidos === 1 ? "lido" : "lidos"}</span></button>`)}</div>
-    ${aviso}`;
-  box.querySelectorAll("[data-uid]").forEach(b => b.onclick = () => openVisit(b.dataset.uid, b.dataset.ap, ""));
-  for (const el of box.querySelectorAll("[data-av]")) {
-    getDoc(doc(db, "perfis", el.dataset.av)).then(d => {
-      if (!d.exists() || !el.isConnected) return;
-      const pf = d.data() || {};
+  box.innerHTML = `<div class="rkbar">${RK_FILTROS.map(([k, l]) => `<button type="button" class="chip ${k === "pv" ? "pv" : ""} ${rkEstado.f === k ? "on" : ""}" data-f="${k}">${esc(l)}</button>`).join("")}</div><div class="rkconteudo"><div class="hint">Carregando ranking…</div></div>`;
+  const barra = box.querySelector(".rkbar"), area = box.querySelector(".rkconteudo");
+  barra.scrollLeft = rkEstado.barra;
+  barra.addEventListener("scroll", () => { rkEstado.barra = barra.scrollLeft; }, { passive: true });
+  let dados = null;
+  const carregar = async () => {
+    if (dados) return dados;
+    const ler = (id) => getDoc(doc(db, "ranking", id)).then(d => d.exists() ? d.data() : null).catch(() => null);
+    const [todos, periodos, quem, atual] = await Promise.all([ler("todos"), ler("periodos"), ler("quem"), ler("atual")]);
+    // antes do primeiro cálculo novo, usa o ranking antigo
+    const t = todos || (atual ? { maisLidos: atual.maisLidos || [], melhores: atual.melhores || [], leitores: (atual.leitores || []).map(l => ({ ...l, concluidos: l.lidos })) } : null);
+    return (dados = { todos: t, periodos, quem: (quem && quem.mapa) || {} });
+  };
+  const mostra = async () => {
+    barra.querySelectorAll("[data-f]").forEach(b => b.classList.toggle("on", b.dataset.f === rkEstado.f));
+    const f = rkEstado.f;
+    if (f === "pv") { montarParaVoce(area, await carregar().catch(() => ({}))); return; }
+    if (f === "genero") { area.innerHTML = `<p class="rkcap">Por gênero chega em breve.</p>`; return; }
+    let d; try { d = await carregar(); } catch (e) { area.innerHTML = `<div class="err">Não consegui carregar o ranking agora.</div>`; return; }
+    if (rkEstado.f !== f || !area.isConnected) return;
+    if (f === "todos") desenharTodos(area, d); else desenharPeriodo(area, d, f);
+    rkCarregaCapas(area);
+  };
+  barra.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-f]"); if (!b || b.dataset.f === rkEstado.f) return;
+    rkEstado.f = b.dataset.f;
+    // a barrinha fica onde está; só se ajeita se a opção tocada estiver cortada na borda
+    const bl = barra.getBoundingClientRect(), r = b.getBoundingClientRect();
+    if (r.left < bl.left) barra.scrollLeft -= (bl.left - r.left) + 8; else if (r.right > bl.right) barra.scrollLeft += (r.right - bl.right) + 8;
+    mostra();
+  });
+  area.addEventListener("click", (e) => {
+    const q = e.target.closest("[data-quem]"); if (q) { abrirQuemLe(q.dataset.quem, q.dataset.tit, dados); return; }
+    const ad = e.target.closest("[data-add]"); if (ad) { adicionarObra(JSON.parse(ad.dataset.add), ad); return; }
+    const pu = e.target.closest("[data-uid]"); if (pu) { openVisit(pu.dataset.uid, pu.dataset.ap, ""); return; }
+    const ob = e.target.closest("[data-obra]"); const card = ob && ob.closest("[data-x]");
+    if (card) openObra(JSON.parse(card.dataset.x));
+  });
+  mostra();
+}
+const rkPos = (i) => `<span class="rkpos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span>`;
+const rkJSON = (x) => esc(JSON.stringify({ chave: x.chave || "", catId: x.catId || "", titulo: x.titulo || "", capa: x.capa || "" }));
+function rkBotoes(x) {
+  const tem = naEstante(x);
+  return `<div class="rkacts">${tem ? `<span class="mini rktem">✓ Na sua estante</span>` : `<button type="button" class="mini rkadd" data-add="${rkJSON(x)}">+ Estante</button>`}<button type="button" class="mini" data-quem="${esc(chaveQuem(x.chave))}" data-tit="${esc(x.titulo)}">Quem lê</button></div>`;
+}
+function desenharTodos(area, d) {
+  const t = d.todos;
+  if (!t) { area.innerHTML = `<p class="rkcap">O ranking ainda está sendo calculado. Volte daqui a pouco.</p>`; return; }
+  const nLeit = rkPC() ? 15 : 10;
+  const vazio = `<p class="rkvazio">Ainda sem dados suficientes.</p>`;
+  const linhaObra = (x, i, met) => `<div class="rkl m" data-x="${rkJSON(x)}">${rkPos(i)}${rkCapa(x)}<div class="rkt"><b>${esc(x.titulo)}</b>${x.titulo2 ? `<small>${esc(x.titulo2)}</small>` : ""}<span class="rkmet">${met}</span>${rkBotoes(x)}</div></div>`;
+  const me = currentUser && currentUser.uid;
+  area.innerHTML = `<p class="rkcap">Soma de todas as leituras desde o início · atualiza todo dia 1º</p>
+    <div class="rkcols">
+      <div class="rktab"><div class="rkth">Os mais lidos da história</div>${(t.maisLidos || []).length ? t.maisLidos.map((x, i) => linhaObra(x, i, `<b>${x.leitores}</b> ${x.leitores === 1 ? "leitor" : "leitores"}`)).join("") : vazio}</div>
+      <div class="rktab"><div class="rkth">Mais bem avaliados</div>${(t.melhores || []).length ? t.melhores.map((x, i) => linhaObra(x, i, `<b>⭐ ${fmtNota(x.media)}</b> · ${x.notas} notas`)).join("") : vazio}</div>
+      <div class="rktab"><div class="rkth">Maiores leitores</div>${(t.leitores || []).length ? t.leitores.slice(0, nLeit).map((l, i) => `<button type="button" class="rkl l" data-uid="${esc(l.uid)}" data-ap="${esc(l.apelido)}">${rkPos(i)}<span class="rkav" data-av="${esc(l.uid)}">${avatarHTML("", l.apelido)}</span><span class="rkt"><b><span data-ap-of="${esc(l.uid)}">@${esc(l.apelido)}</span>${l.uid === me ? `<span class="rkvoce">você</span>` : ""}</b><span class="rkmet"><b>${l.concluidos}</b> ${l.concluidos === 1 ? "concluído" : "concluídos"}</span></span></button>`).join("") : vazio}</div>
+    </div>
+    <p class="rknote">Ranking feito apenas com perfis públicos.</p>`;
+  // foto e apelido atuais de cada leitor
+  for (const el of area.querySelectorAll("[data-av]")) {
+    getDoc(doc(db, "perfis", el.dataset.av)).then(dd => {
+      if (!dd.exists() || !el.isConnected) return;
+      const pf = dd.data() || {};
       el.innerHTML = avatarHTML(pf.foto, pf.apelido);
-      if (pf.apelido) {   // mostra sempre o apelido atual do perfil, do jeito que a pessoa digitou
-        const b = box.querySelector(`[data-ap-of="${el.dataset.av}"]`); if (b) b.textContent = "@" + pf.apelido;
-        const row = el.closest("[data-ap]"); if (row) row.dataset.ap = pf.apelido;
-      }
+      if (pf.apelido) { const b = area.querySelector(`[data-ap-of="${el.dataset.av}"]`); if (b) b.textContent = "@" + pf.apelido; const row = el.closest("[data-ap]"); if (row) row.dataset.ap = pf.apelido; }
     }).catch(() => {});
   }
+}
+const MESES_CAP = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+function desenharPeriodo(area, d, f) {
+  const p = d.periodos || {};
+  const agora = new Date();
+  const cap = { alta: "O que mais cresceu nos últimos 7 dias · atualiza todo dia", semana: "De segunda até hoje · atualiza todo dia",
+    mes: `${MESES_CAP[agora.getMonth()]} de ${agora.getFullYear()} até hoje · atualiza todo dia` }[f];
+  const lista = p[f] || [];
+  area.innerHTML = `<p class="rkcap">${cap}</p>${lista.length ? `<div class="rkgrade">${lista.map((x, i) => `<div class="rkcard" data-x="${rkJSON(x)}">${rkCapa(x, "g")}<span class="rkn ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span><b>${esc(x.titulo)}</b></div>`).join("")}</div>`
+    : `<p class="rkvazio">Ainda não tem leituras neste período.</p>`}`;
+  // a posição fica no canto da capa
+  area.querySelectorAll(".rkcard").forEach(c => { const n = c.querySelector(".rkn"), cp = c.querySelector(".rkc"); if (n && cp) cp.appendChild(n); });
+}
+function abrirQuemLe(ch, titulo, dados) {
+  const l = ((dados && dados.quem) || {})[ch] || [];
+  const cor = { lendo: "var(--c-lendo)", fila: "var(--c-fila)", pausado: "var(--c-pausa)", concluido: "var(--c-fim)" };
+  abrirFolha(`<div class="mhead"><h2 class="fh">Quem lê ${esc(titulo || "")}</h2><button type="button" class="icon-btn" data-fx>✕</button></div>
+    <div class="mbody">${l.length ? `<div class="menu-list">${l.map(q => `<button type="button" class="rkq" data-uid="${esc(q.uid)}" data-ap="${esc(q.apelido)}"><span class="rkav" data-av="${esc(q.uid)}">${avatarHTML("", q.apelido)}</span><span class="rkt"><b>@${esc(q.apelido)}</b><small>${q.st === "concluido" && q.nota ? "nota " + fmtNota(q.nota) : q.cap ? "cap. " + fmtCap(q.cap) : "&nbsp;"}</small></span><span class="rkst" style="background:${cor[q.st] || "var(--muted)"}">${esc((STATUS[q.st] || {}).label || "")}</span></button>`).join("")}</div>`
+      : `<p class="hint">Ninguém com perfil público tem essa obra na estante agora.</p>`}
+    <p class="rknote">Toque em alguém para abrir a estante da pessoa. Só aparecem perfis públicos.</p></div>`, (f) => {
+    f.querySelectorAll("[data-uid]").forEach(b => b.onclick = () => { fecharFolha(); openVisit(b.dataset.uid, b.dataset.ap, ""); });
+    f.querySelectorAll("[data-av]").forEach(el => getDoc(doc(db, "perfis", el.dataset.av)).then(dd => { if (dd.exists() && el.isConnected) el.innerHTML = avatarHTML((dd.data() || {}).foto, (dd.data() || {}).apelido); }).catch(() => {}));
+  });
+}
+// ⓘ de uma obra do ranking (ou do Para você)
+async function openObra(x) {
+  abrirFolha(`<div class="mhead"><h2 class="fh">${esc(x.titulo)}</h2><button type="button" class="icon-btn" data-fx>✕</button></div>
+    <div class="mbody"><div class="obra">${rkCapa(x, "o")}<div class="obrainfo"><div class="hint">Carregando informações do catálogo…</div></div></div>
+    <div class="obraacts"></div></div>`, async (f) => {
+    rkCarregaCapas(f);
+    const acts = f.querySelector(".obraacts");
+    const pintaBotao = () => { acts.innerHTML = naEstante(x) ? `<span class="btn" style="opacity:.7">✓ Na sua estante</span>` : `<button type="button" class="btn primary" id="obAdd">+ Adicionar à estante (Na fila)</button>`;
+      const b = acts.querySelector("#obAdd"); if (b) b.onclick = async () => { await adicionarObra(x, b); pintaBotao(); }; };
+    pintaBotao();
+    const inf = f.querySelector(".obrainfo");
+    let c = x.catId ? await lerCatalogo(x.catId) : null;
+    if (!c && x.catId) c = await catalogoPorChave(x.catId).catch(() => null);
+    if (c) c = await completarSinopse(x.catId, c);
+    if (!inf.isConnected) return;
+    if (!c) { inf.innerHTML = `<p class="hint">Sem informações do catálogo para esta obra.</p>`; return; }
+    const idd = idadeDe(c);
+    inf.innerHTML = `${idd ? `<div class="idaderow">${seloIdade(idd)}<span>${idd === "Livre" ? "Livre para todos" : "Não recomendado para menores de " + idd.replace("+", " anos")}</span></div>` : ""}
+      ${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+      <div class="sinopse">${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
+  });
+}
+// catálogo a partir da chave (al123 / mal123), quando a obra ainda não está no catálogo do app
+async function catalogoPorChave(k) {
+  const m = /^(al|mal)(\d+)$/.exec(k || ""); if (!m) return null;
+  const arg = m[1] === "al" ? `id:${m[2]}` : `idMal:${m[2]}`;
+  const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ query: `query{Media(${arg},type:MANGA){id idMal title{romaji english} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format isAdult}}` }) });
+  const md = j && j.data && j.data.Media; if (!md) return null;
+  const r = rDeAniList(md); r.key = k;
+  return prepararCatalogo(r);
+}
+const rDeAniList = (m) => ({ key: m.idMal ? "mal" + m.idMal : "al" + m.id, alId: m.id, malId: m.idMal || null,
+  original: ((m.title && (m.title.romaji || m.title.english)) || "").trim(), ingles: ((m.title && m.title.english) || "").trim(),
+  capa: (m.coverImage && m.coverImage.large) || "", generos: generosPT(m.genres), desc: m.description || "",
+  tipo: TIPO[m.countryOfOrigin] || "Mangá", sinonimos: (m.synonyms || []).filter(x => typeof x === "string") });
+// "+ Estante" / "Adicionar na fila": entra como Na fila, já ligada ao catálogo
+async function adicionarObra(x, btn) {
+  if (naEstante(x)) { toast("Essa obra já está na sua estante."); return; }
+  if (btn) { btn.disabled = true; btn.textContent = "Adicionando…"; }
+  let c = null;
+  try { if (x.catId) c = (await lerCatalogo(x.catId)) || (await catalogoPorChave(x.catId)); } catch (e) {}
+  const title = (c && nomePopular(c)) || x.titulo;
+  const capa = (c && c.capa) || (String(x.capa || "").startsWith("rkcapa:") ? (rkCapaCache[x.capa.slice(7)] || "") : x.capa) || "";
+  const data = { title: String(title).slice(0, 120), titulo2: c ? nomeSecundario(c, title) : "", alias: c ? aliasDe(c) : "", catId: c ? x.catId : "",
+    cover: safeCover(capa), link: "", status: "fila", chapter: 0, nota: null, comentario: "" };
+  const privado = !!((c && idadeDe(c) === "18+") || nomeSuspeito(data.title));
+  create(privado ? { ...data, privado: true } : data);
+  toast(privado ? "Adicionado em Na fila, como privado (obra 18+)." : "Adicionado à sua estante em Na fila!");
+  // troca o "+ Estante" dessa obra em todo lugar que estiver aparecendo
+  document.querySelectorAll("[data-add]").forEach(b => { let y = {}; try { y = JSON.parse(b.dataset.add); } catch (e) {}
+    if (b === btn || (y.chave && y.chave === x.chave)) { const s = document.createElement("span"); s.className = "mini rktem"; s.textContent = "✓ Na sua estante"; b.replaceWith(s); } });
+}
+
+// ---------- Para você: 10 sugestões; "Não me interessa" troca por outra ----------
+const PV_KEY = () => "estante-pv-v1-" + (currentUser ? currentUser.uid : "");
+const PV_PROIBIDOS = ["Ecchi", "Hentai"];
+const PV_VARIAR = ["Sports", "Mystery", "Romance", "Comedy", "Slice of Life", "Horror", "Sci-Fi", "Psychological", "Drama", "Supernatural", "Adventure", "Fantasy", "Action"];
+const PV_CAMPOS = "id idMal type format isAdult genres countryOfOrigin title{romaji english} synonyms coverImage{large} description(asHtml:false)";
+const aniQ = (query) => httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query }) });
+function pvLer() { try { return JSON.parse(localStorage.getItem(PV_KEY()) || "{}"); } catch (e) { return {}; } }
+function pvSalvar(o) { try { localStorage.setItem(PV_KEY(), JSON.stringify(o)); } catch (e) {} }
+const pvOk = (m) => m && m.type === "MANGA" && m.format !== "NOVEL" && !m.isAdult && !(m.genres || []).some(g => PV_PROIBIDOS.includes(g)) && (m.coverImage && m.coverImage.large);
+const pvItem = (m) => { const r = rDeAniList(m); return { chave: r.key, catId: r.key, titulo: r.ingles && TIPO[m.countryOfOrigin] === "Mangá" ? r.ingles : (r.original || r.ingles), capa: r.capa, r }; };
+async function pvMontarFila(dados) {
+  const meus = [...items.values()];
+  const tenho = new Set(); meus.forEach(it => { if (it.catId) tenho.add(it.catId); tenho.add("t:" + norm(it.title)); });
+  const jaTenho = (x) => tenho.has(x.chave) || tenho.has("t:" + norm(x.titulo)) || (x.r && (tenho.has("al" + x.r.alId) || (x.r.malId && tenho.has("mal" + x.r.malId))));
+  // gêneros que você mais lê (pelo catálogo)
+  const ligados = meus.filter(it => it.catId).slice(0, 60);
+  const cats = await Promise.all(ligados.map(it => lerCatalogo(it.catId).catch(() => null)));
+  const porGen = {}; const inv = Object.fromEntries(Object.entries(GENEROS).map(([en, pt]) => [pt, en]));
+  cats.forEach(c => (c && c.generos || []).forEach(g => { const en = inv[g]; if (en) porGen[en] = (porGen[en] || 0) + 1; }));
+  const principal = [], vistos = new Set();
+  const poe = (lista, m) => { if (!pvOk(m)) return; const x = pvItem(m); if (vistos.has(x.chave) || jaTenho(x)) return; vistos.add(x.chave); lista.push(x); };
+  // 1) parecidos com o que você avaliou bem
+  const sementes = meus.filter(it => it.catId && parseNota(it.nota) >= 8).sort((a, b) => parseNota(b.nota) - parseNota(a.nota)).slice(0, 4);
+  if (!sementes.length) sementes.push(...meus.filter(it => it.catId && (stOf(it) === "lendo" || stOf(it) === "concluido")).sort((a, b) => (b.lastReadAt || 0) - (a.lastReadAt || 0)).slice(0, 3));
+  const recs = [];
+  for (const it of sementes) {
+    const c = cats[ligados.indexOf(it)] || await lerCatalogo(it.catId).catch(() => null);
+    const mm = /^(al|mal)(\d+)$/.exec(it.catId); if (!mm) continue;
+    const arg = c && c.alId ? `id:${c.alId}` : mm[1] === "al" ? `id:${mm[2]}` : `idMal:${mm[2]}`;
+    try { const j = await aniQ(`query{Media(${arg},type:MANGA){recommendations(perPage:12,sort:RATING_DESC){nodes{mediaRecommendation{${PV_CAMPOS}}}}}}`);
+      recs.push(((j.data && j.data.Media && j.data.Media.recommendations && j.data.Media.recommendations.nodes) || []).map(n => n.mediaRecommendation)); } catch (e) {}
+  }
+  for (let i = 0; i < 12; i++) recs.forEach(l => l[i] && poe(principal, l[i]));   // intercala as sementes
+  // 2) bem avaliados e em alta na comunidade
+  const comunidade = [...((dados && dados.todos && dados.todos.melhores) || []), ...((dados && dados.periodos && dados.periodos.alta) || [])].filter(x => x.catId && !jaTenho(x) && !vistos.has(x.chave));
+  for (const x of comunidade.slice(0, 8)) { vistos.add(x.chave); principal.push({ chave: x.chave, catId: x.catId, titulo: x.titulo, capa: x.capa }); }
+  // 3) populares dos gêneros que você mais lê
+  const favs = Object.entries(porGen).sort((a, b) => b[1] - a[1]).map(([g]) => g).slice(0, 2);
+  for (const g of (favs.length ? favs : ["Action", "Fantasy"])) {
+    try { const j = await aniQ(`query{Page(perPage:20){media(type:MANGA,genre:"${g}",isAdult:false,sort:POPULARITY_DESC){${PV_CAMPOS}}}}`); ((j.data && j.data.Page && j.data.Page.media) || []).forEach(m => poe(principal, m)); } catch (e) {}
+  }
+  // 4) para variar: os 2 gêneros que você quase não lê
+  const raros = PV_VARIAR.filter(g => !favs.includes(g)).sort((a, b) => (porGen[a] || 0) - (porGen[b] || 0)).slice(0, 2);
+  const variar = [];
+  for (const g of raros) {
+    try { const j = await aniQ(`query{Page(perPage:15){media(type:MANGA,genre:"${g}",isAdult:false,sort:SCORE_DESC,popularity_greater:20000){${PV_CAMPOS}}}}`); ((j.data && j.data.Page && j.data.Page.media) || []).forEach(m => poe(variar, m)); } catch (e) {}
+  }
+  return { principal: principal.slice(0, 40), variar: variar.slice(0, 16) };
+}
+async function montarParaVoce(area, dados) {
+  area.innerHTML = `<p class="rkcap">Sugestões pelo que você lê e avalia · atualiza todo dia</p><div class="rkgrade pvg"><div class="hint">Montando suas sugestões…</div></div>`;
+  const hoje = new Date().toISOString().slice(0, 10);
+  let pv = pvLer();
+  if (pv.dia !== hoje || !pv.fila) {
+    if (!navigator.onLine) { area.querySelector(".pvg").innerHTML = `<p class="rkvazio">Sem internet: as sugestões precisam de conexão.</p>`; return; }
+    let fila;
+    try { fila = await pvMontarFila(dados); } catch (e) { fila = null; }
+    if (!fila || (!fila.principal.length && !fila.variar.length)) { if (area.isConnected) area.querySelector(".pvg").innerHTML = `<p class="rkvazio">Não consegui montar as sugestões agora. Tente de novo daqui a pouco.</p>`; return; }
+    const nao = pv.nao || [];
+    // as que você dispensou ficam para o fim da fila (voltam só se acabar o resto)
+    const ordena = (l) => [...l.filter(x => !nao.includes(x.chave)), ...l.filter(x => nao.includes(x.chave)).sort((a, b) => nao.indexOf(a.chave) - nao.indexOf(b.chave))];
+    const P = ordena(fila.principal), V = ordena(fila.variar);
+    const mostra = [...P.slice(0, 8).map(x => ({ ...x, tipo: "p" })), ...V.slice(0, 2).map(x => ({ ...x, tipo: "v" }))];
+    if (mostra.length < 10) mostra.push(...P.slice(8, 8 + (10 - mostra.length)).map(x => ({ ...x, tipo: "p" })));
+    // as 2 "para variar" ficam no meio e no fim, não juntas
+    const vs = mostra.filter(x => x.tipo === "v"), ps = mostra.filter(x => x.tipo === "p");
+    const ordem = []; ps.forEach((x, i) => { ordem.push(x); if (i === 3 && vs[0]) ordem.push(vs.shift()); }); ordem.push(...vs);
+    const usados = new Set(ordem.map(x => x.chave));
+    pv = { dia: hoje, mostra: ordem.slice(0, 10), fila: { p: P.filter(x => !usados.has(x.chave)), v: V.filter(x => !usados.has(x.chave)) }, nao };
+    pvSalvar(pv);
+  }
+  if (!area.isConnected) return;
+  desenharPV(area, pv);
+}
+function desenharPV(area, pv, novo) {
+  const g = area.querySelector(".pvg"); if (!g) return;
+  g.innerHTML = pv.mostra.map(x => `<div class="rkcard pv ${novo === x.chave ? "entra" : ""}" data-x="${rkJSON(x)}">${rkCapa(x, "g")}<b>${esc(x.titulo)}</b>
+    <div class="pvacts">${naEstante(x) ? `<span class="mini rktem">✓ Na fila</span>` : `<button type="button" class="mini rkadd" data-pvadd="${esc(x.chave)}">+ Adicionar na fila</button>`}<button type="button" class="mini pvnao" data-nao="${esc(x.chave)}">Não me interessa</button></div></div>`).join("");
+  g.onclick = (e) => {
+    const a = e.target.closest("[data-pvadd]");
+    if (a) { e.stopPropagation(); const x = pv.mostra.find(y => y.chave === a.dataset.pvadd); if (x) adicionarObraPV(x, a); return; }
+    const n = e.target.closest("[data-nao]"); if (!n) return;
+    e.stopPropagation();
+    const k = n.dataset.nao, i = pv.mostra.findIndex(y => y.chave === k); if (i < 0) return;
+    const sai = pv.mostra[i], fila = pv.fila[sai.tipo === "v" ? "v" : "p"];
+    pv.nao = [...(pv.nao || []).filter(y => y !== k), k].slice(-300);
+    fila.push(sai);   // volta para o fim da fila: só reaparece depois de todas as outras
+    const prox = fila.shift();
+    pv.mostra[i] = prox && prox.chave !== k ? { ...prox, tipo: sai.tipo } : sai;
+    pvSalvar(pv);
+    const card = n.closest(".rkcard"); card.classList.add("sai");
+    setTimeout(() => desenharPV(area, pv, pv.mostra[i].chave), 220);
+  };
+}
+async function adicionarObraPV(x, btn) {
+  if (naEstante(x)) return;
+  btn.disabled = true; btn.textContent = "Adicionando…";
+  try { if (x.r) await prepararCatalogo(x.r); } catch (e) {}
+  await adicionarObra({ chave: x.chave, catId: x.catId, titulo: x.titulo, capa: x.capa }, null);
+  const s = document.createElement("span"); s.className = "mini rktem"; s.textContent = "✓ Na fila"; btn.replaceWith(s);
 }
 
 

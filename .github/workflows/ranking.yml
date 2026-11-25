@@ -1,10 +1,12 @@
-# Calcula o ranking todo dia 1º, às 3h da manhã (horário de Brasília), sem precisar atualizar o app.
-# Também pode ser rodado manualmente: aba Actions → "Ranking mensal" → Run workflow.
-name: Ranking mensal
+# Ranking: roda todo dia às 3h da manhã (horário de Brasília), sem precisar atualizar o app.
+#  - todo dia: histórico de leituras, Em alta, Esta semana, Este mês e "Quem lê";
+#  - dia 1º: também recalcula "Todos os tempos".
+# Rodando manualmente (aba Actions → "Ranking" → Run workflow), recalcula tudo na hora.
+name: Ranking
 
 on:
   schedule:
-    - cron: "0 6 1 * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:
@@ -21,4 +23,5 @@ jobs:
         working-directory: scripts
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          MODO: ${{ github.event_name == 'workflow_dispatch' && 'tudo' || 'auto' }}
         run: node ranking.js

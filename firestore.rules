@@ -197,6 +197,11 @@ service cloud.firestore {
       allow read: if acesso();
       allow write: if false;
     }
+    // capas do ranking guardadas à parte (as do MangaDex, que não podem ser exibidas direto do site)
+    match /rkcapas/{id} {
+      allow read: if acesso();
+      allow write: if false;
+    }
 
     // ---------- suporte: relatos de problemas ----------
     match /suporte/{id} {

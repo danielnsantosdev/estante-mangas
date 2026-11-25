@@ -1,6 +1,10 @@
-// Ranking mensal da Estante de Mangás.
-// Roda no GitHub todo dia 1º (ou manualmente na aba Actions) e grava o resultado no Firebase.
-// Só entram perfis PÚBLICOS e não ocultos. O app apenas lê o resultado pronto.
+// Ranking da Estante de Mangás.
+// Roda no GitHub todo dia (e manualmente na aba Actions) e grava o resultado no Firebase:
+//  - todo dia: guarda o histórico de leituras e calcula Em alta, Esta semana, Este mês e "Quem lê";
+//  - dia 1º (ou rodando manualmente): recalcula "Todos os tempos" (somando o histórico inteiro).
+// Só entram perfis PÚBLICOS e não ocultos. Leituras antigas continuam contando para as obras
+// mesmo se a pessoa apagar o mangá ou fechar o perfil (sem mostrar quem foi).
+// O app apenas lê o resultado pronto.
 const admin = require("firebase-admin");
 
 // Lê a chave (segredo FIREBASE_SA) e conserta defeitos comuns de copiar e colar:
@@ -118,83 +122,154 @@ async function buscaAniList(titulo) {
   return null;
 }
 
-(async () => {
-  const perfis = await db.collection("perfis").where("publico", "==", true).get();
-  const entradas = [];   // um item por mangá de cada leitor
-  const leitores = [];
-  let contados = 0;
+const DIA = 86400e3;
+const agoraBR = () => new Date(Date.now() - 3 * 3600e3);   // horário de Brasília (como UTC)
+const idHist = (uid, chave) => `${uid}__${chave}`.replace(/\//g, "_").slice(0, 300);
+const ehCat = (k) => /^(al|mal)\d+$/.test(k || "");
 
-  for (const p of perfis.docs) {
-    const pf = p.data() || {};
-    if (pf.oculto === true || !pf.apelido) continue;
-    contados++;
-    const ms = await db.collection("users").doc(p.id).collection("mangas").get();
-    let lidos = 0;
+(async () => {
+  const br = agoraBR();
+  const tudo = process.env.MODO === "tudo" || br.getUTCDate() === 1;
+  const inicioDiaBR = Date.UTC(br.getUTCFullYear(), br.getUTCMonth(), br.getUTCDate()) + 3 * 3600e3;
+  const segunda = inicioDiaBR - ((br.getUTCDay() + 6) % 7) * DIA;
+  const inicioMes = Date.UTC(br.getUTCFullYear(), br.getUTCMonth(), 1) + 3 * 3600e3;
+  const seteDias = Date.now() - 7 * DIA;
+  const mesRef = `${br.getUTCFullYear()}-${String(br.getUTCMonth() + 1).padStart(2, "0")}`;
+
+  // 1) perfis públicos e as estantes deles
+  const perfisSnap = await db.collection("perfis").get();
+  const publicos = new Map();
+  for (const p of perfisSnap.docs) { const pf = p.data() || {}; if (pf.publico === true && pf.oculto !== true && pf.apelido) publicos.set(p.id, pf); }
+  const entradas = [];
+  for (const [uid] of publicos) {
+    const ms = await db.collection("users").doc(uid).collection("mangas").get();
     for (const m of ms.docs) {
       const x = m.data() || {};
       const st = x.status === "acumulando" ? "pausado" : x.status;
       const cv = String(x.cover || "");
-      entradas.push({ uid: p.id, title: String(x.title || "").trim(), catId: /^(al|mal)\d+$/.test(x.catId || "") ? x.catId : "", st,
-        nota: typeof x.nota === "number" ? x.nota : null,
+      entradas.push({ uid, title: String(x.title || "").trim(), catId: ehCat(x.catId) ? x.catId : "", st,
+        nota: typeof x.nota === "number" ? x.nota : null, cap: Number(x.chapter) || 0,
+        criado: Number(x.createdAt) || Date.now(), lido: Number(x.lastReadAt) || 0,
         capa: /^https?:\/\//.test(cv) || (/^data:image\//.test(cv) && cv.length < 120000) ? cv : "" });
-      if (st === "concluido") lidos++;
     }
-    if (lidos > 0) leitores.push({ uid: p.id, apelido: pf.apelido, lidos });
   }
+  console.log(`${publicos.size} perfis públicos, ${entradas.length} mangás nas estantes.`);
 
-  // 1) mangás sem vínculo: procura no catálogo pelo nome (uma vez por nome)
-  const porNome = new Map();
-  for (const e of entradas) if (!e.catId && e.title && !porNome.has(norm(e.title))) porNome.set(norm(e.title), e.title);
-  const achados = new Map();
-  for (const [k, titulo] of porNome) { achados.set(k, await buscaCatalogo(titulo)); await sleep(2200); }
-  for (const e of entradas) if (!e.catId) { const a = achados.get(norm(e.title)); if (a) { e.catId = a.chave; e.aniList = a; } }
-
-  // 2) agrupa por obra
-  const obras = new Map();
+  // 2) mangás sem vínculo: procura no catálogo pelo nome (guardado de um dia para o outro, só procura nome novo)
+  const cacheRef = db.collection("rkcache").doc("nomes");
+  const cache = ((await cacheRef.get()).data() || {}).mapa || {};
+  let novosNomes = 0;
   for (const e of entradas) {
-    const chave = e.catId || "nome:" + norm(e.title);
-    if (!obras.has(chave)) obras.set(chave, { titulos: new Map(), capa: "", aniList: null, leitores: new Set(), notas: [] });
-    const o = obras.get(chave);
-    o.titulos.set(e.title, (o.titulos.get(e.title) || 0) + 1);
-    if (!o.capa && e.capa) o.capa = e.capa;
-    if (!o.aniList && e.aniList) o.aniList = e.aniList;
-    if (e.st === "lendo" || e.st === "concluido") o.leitores.add(e.uid);           // "mais lidos" = Lendo + Concluído
-    if (e.nota !== null) o.notas.push(e.nota);
+    if (e.catId || !e.title) continue;
+    const k = norm(e.title).slice(0, 150).replace(/[.\/\[\]*`~]/g, "_");
+    let c = cache[k];
+    if (!c || (!c.chave && Date.now() - (c.em || 0) > 7 * DIA)) {   // não achado: tenta de novo depois de 7 dias
+      const a = await buscaCatalogo(e.title); await sleep(2200); novosNomes++;
+      c = a ? { chave: a.chave, titulo: a.titulo2 || a.titulo || "", capa: a.capa || "", em: Date.now() } : { chave: "", em: Date.now() };
+      cache[k] = c;
+    }
+    if (c.chave) { e.catId = c.chave; e.achado = c; }
   }
+  if (novosNomes) await cacheRef.set({ mapa: cache });
 
-  // 3) nome e capa: catálogo do app primeiro, depois AniList, por último o que o leitor colocou
-  const lista = [];
-  for (const [chave, o] of obras) {
-    const digitado = [...o.titulos.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    let titulo = digitado, titulo2 = "", capa = "";
-    if (chave.startsWith("md:")) { if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; } }
-    else if (!chave.startsWith("nome:")) {
+  // 3) histórico de leituras: um registro por pessoa + obra, que nunca é apagado
+  const histSnap = await db.collection("historico").get();
+  const hist = new Map(histSnap.docs.map(d => [d.id, d.data()]));
+  const mudou = new Map();
+  for (const e of entradas) {
+    const chave = e.catId || "nome:" + norm(e.title).slice(0, 150);
+    e.chave = chave;
+    const id = idHist(e.uid, chave);
+    const h = hist.get(id) || { uid: e.uid, chave, desde: e.criado, ultimaLeitura: 0, lido: false, concluido: false, nota: null };
+    const novo = { ...h, titulo: e.title.slice(0, 120),
+      desde: Math.min(h.desde || e.criado, e.criado),
+      ultimaLeitura: Math.max(h.ultimaLeitura || 0, (e.st === "lendo" || e.st === "concluido") ? e.lido : 0),
+      lido: h.lido || e.st === "lendo" || e.st === "concluido",
+      concluido: h.concluido || e.st === "concluido",
+      nota: e.nota !== null ? e.nota : (h.nota ?? null) };
+    if (JSON.stringify(novo) !== JSON.stringify(h)) { mudou.set(id, novo); }
+    hist.set(id, novo);
+  }
+  let lote = db.batch(), n = 0;
+  for (const [id, h] of mudou) { lote.set(db.collection("historico").doc(id), h); if (++n % 400 === 0) { await lote.commit(); lote = db.batch(); } }
+  if (n % 400) await lote.commit();
+  console.log(`Histórico: ${hist.size} registros (${mudou.size} atualizados hoje).`);
+
+  // 4) nome e capa de cada obra: catálogo do app primeiro, depois o que foi achado, por último o que o leitor colocou
+  const info = new Map();
+  async function obra(chave) {
+    if (info.has(chave)) return info.get(chave);
+    const daqui = entradas.filter(e => e.chave === chave);
+    const nomes = new Map(); for (const e of daqui) nomes.set(e.title, (nomes.get(e.title) || 0) + 1);
+    const hs = [...hist.values()].filter(h => h.chave === chave);
+    const digitado = ([...nomes.entries()].sort((a, b) => b[1] - a[1])[0] || [])[0] || (hs[0] && hs[0].titulo) || chave.replace(/^nome:/, "");
+    let titulo = digitado, capa = "";
+    if (ehCat(chave)) {
       const c = await db.collection("catalogo").doc(chave).get();
       if (c.exists) { const d = c.data(); titulo = nomePopular(d) || titulo; capa = d.capa || ""; }
-      else if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; }
-      else {
-        const a = await buscaCatalogo(digitado); await sleep(2200);
-        if (a && a.chave === chave) { titulo = a.titulo2 || a.titulo || titulo; capa = a.capa; }
-      }
     }
-    if (!capa) capa = o.capa;
-    if (norm(digitado) !== norm(titulo)) titulo2 = digitado;
-    lista.push({ chave, titulo, titulo2, capa: capa || "", leitores: o.leitores.size, notas: o.notas.length, media: o.notas.length ? media(o.notas) : 0 });
+    const achado = (daqui.find(e => e.achado) || {}).achado;
+    if (!capa && achado) { titulo = achado.titulo || titulo; capa = achado.capa || ""; }
+    if (!capa) capa = (daqui.find(e => e.capa) || {}).capa || "";
+    // capas embutidas (MangaDex) ficam num documento à parte, para o ranking não passar do limite de tamanho
+    if (capa.startsWith("data:")) { const cid = chave.replace(/[\/]/g, "_").slice(0, 300); await db.collection("rkcapas").doc(cid).set({ capa }); capa = "rkcapa:" + cid; }
+    const r = { chave, catId: ehCat(chave) ? chave : "", titulo: String(titulo).slice(0, 120), capa };
+    info.set(chave, r); return r;
   }
+  const top = async (mapa, qtd, extra) => {
+    const lista = [...mapa.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, qtd);
+    const out = []; for (const [chave, v] of lista) out.push({ ...(await obra(chave)), ...(extra ? extra(chave, v) : {}) }); return out;
+  };
+  const conta = (filtro) => { const m = new Map(); for (const h of hist.values()) if (filtro(h)) m.set(h.chave, (m.get(h.chave) || 0) + 1); return m; };
 
-  const maisLidos = lista.filter(x => x.leitores > 0).sort((a, b) => b.leitores - a.leitores || a.titulo.localeCompare(b.titulo)).slice(0, 10)
-    .map(({ chave, titulo, titulo2, capa, leitores }) => ({ chave, titulo, titulo2, capa, leitores }));
-  const melhores = lista.filter(x => x.notas >= 2).sort((a, b) => b.media - a.media || b.notas - a.notas).slice(0, 10)
-    .map(({ chave, titulo, titulo2, capa, media, notas }) => ({ chave, titulo, titulo2, capa, media, notas }));
-  const topLeitores = leitores.sort((a, b) => b.lidos - a.lidos || a.apelido.localeCompare(b.apelido)).slice(0, 10);
+  // 5) períodos (todo dia)
+  const semana = conta(h => h.lido && h.ultimaLeitura >= segunda);
+  const mes = conta(h => h.lido && h.ultimaLeitura >= inicioMes);
+  const alta = new Map();
+  for (const h of hist.values()) {
+    if (!h.lido) continue;
+    const pts = (h.desde >= seteDias ? 2 : 0) + (h.ultimaLeitura >= seteDias ? 1 : 0);
+    if (pts) alta.set(h.chave, (alta.get(h.chave) || 0) + pts);
+  }
+  const periodos = { geradoEm: Date.now(), mesRef, alta: await top(alta, 10), semana: await top(semana, 10), mes: await top(mes, 10) };
+  await db.collection("ranking").doc("periodos").set(periodos);
 
-  const agora = new Date(Date.now() - 3 * 3600e3); // horário de Brasília
-  const mes = `${agora.getUTCFullYear()}-${String(agora.getUTCMonth() + 1).padStart(2, "0")}`;
-  const semCapa = lista.filter(x => !x.capa).map(x => `${x.titulo} [${x.chave}]`);
-  const dados = { mes, geradoEm: Date.now(), perfisContados: contados, maisLidos, melhores, leitores: topLeitores };
-  await db.collection("ranking").doc("atual").set(dados);
-  await db.collection("ranking").doc(mes).set(dados);
-  console.log(`Ranking de ${mes} gerado com ${contados} perfis públicos e ${lista.length} obras.`);
-  if (semCapa.length) console.log("Obras sem capa (não achadas no AniList nem no MyAnimeList): " + semCapa.join(" | "));
+  // 6) todos os tempos (dia 1º, ou quando ainda não existe)
+  const temTodos = (await db.collection("ranking").doc("todos").get()).exists;
+  let todos = null;
+  if (tudo || !temTodos) {
+    const lidos = conta(h => h.lido);
+    const notas = new Map();
+    for (const h of hist.values()) if (typeof h.nota === "number") { if (!notas.has(h.chave)) notas.set(h.chave, []); notas.get(h.chave).push(h.nota); }
+    const medias = new Map([...notas].filter(([, a]) => a.length >= 2).map(([k, a]) => [k, media(a)]));
+    const melhoresLista = [...medias.entries()].sort((a, b) => b[1] - a[1] || notas.get(b[0]).length - notas.get(a[0]).length).slice(0, 10);
+    const melhores = []; for (const [chave, m] of melhoresLista) melhores.push({ ...(await obra(chave)), media: m, notas: notas.get(chave).length });
+    const porLeitor = new Map(); for (const h of hist.values()) if (h.concluido && publicos.has(h.uid)) porLeitor.set(h.uid, (porLeitor.get(h.uid) || 0) + 1);
+    const leitores = [...porLeitor.entries()].map(([uid, c]) => ({ uid, apelido: publicos.get(uid).apelido, concluidos: c }))
+      .sort((a, b) => b.concluidos - a.concluidos || a.apelido.localeCompare(b.apelido)).slice(0, 15);
+    todos = { geradoEm: Date.now(), mesRef, maisLidos: await top(lidos, 10, (k, v) => ({ leitores: v })), melhores, leitores };
+    await db.collection("ranking").doc("todos").set(todos);
+    // versões antigas do app leem "atual"
+    await db.collection("ranking").doc("atual").set({ mes: mesRef, geradoEm: Date.now(), perfisContados: publicos.size,
+      maisLidos: todos.maisLidos.map(x => ({ ...x, capa: x.capa.startsWith("rkcapa:") ? "" : x.capa })),
+      melhores: todos.melhores.map(x => ({ ...x, capa: x.capa.startsWith("rkcapa:") ? "" : x.capa })),
+      leitores: todos.leitores.slice(0, 10).map(l => ({ uid: l.uid, apelido: l.apelido, lidos: l.concluidos })) });
+    console.log(`Todos os tempos recalculado: ${todos.maisLidos.length} mais lidos, ${melhores.length} mais bem avaliados, ${leitores.length} leitores.`);
+  } else todos = (await db.collection("ranking").doc("todos").get()).data();
+
+  // 7) "Quem lê": quem tem hoje cada obra das tabelas (só perfis públicos)
+  const chaves = new Set([...(todos.maisLidos || []), ...(todos.melhores || [])].map(x => x.chave));
+  const quem = {};
+  for (const e of entradas) {
+    if (!chaves.has(e.chave)) continue;
+    const ch = e.chave.replace(/[.\/\[\]*`~]/g, "_");
+    (quem[ch] = quem[ch] || []).push({ uid: e.uid, apelido: publicos.get(e.uid).apelido, st: e.st, cap: e.cap, nota: e.nota });
+  }
+  for (const k in quem) quem[k] = quem[k].sort((a, b) => (b.st === "lendo") - (a.st === "lendo") || a.apelido.localeCompare(b.apelido)).slice(0, 40);
+  await db.collection("ranking").doc("quem").set({ geradoEm: Date.now(), mapa: quem });
+
+  const semCapa = [...info.values()].filter(x => !x.capa).map(x => `${x.titulo} [${x.chave}]`);
+  if (semCapa.length) console.log("Obras sem capa: " + semCapa.join(" | "));
+  console.log(`Pronto. Em alta: ${periodos.alta.length} · Esta semana: ${periodos.semana.length} · Este mês: ${periodos.mes.length}.`);
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });
