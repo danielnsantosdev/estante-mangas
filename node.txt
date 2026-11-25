@@ -1,0 +1,7 @@
+You're using the model: 'MobileNetV2'. See NSFWJS docs for instructions on hosting your own model (https://github.com/infinitered/nsfwjs?tab=readme-ov-file#host-your-own-model).
+
+============================
+Hi, looks like you are running TensorFlow.js in Node.js. To speed things up dramatically, install our node backend, visit https://github.com/tensorflow/tfjs-node for more details. 
+============================
+carregou em 1227 ms
+[{"className":"Drawing","probability":0.7977590560913086},{"className":"Neutral","probability":0.16222335398197174},{"className":"Hentai","probability":0.026886573061347008},{"className":"Porn","probability":0.011061537079513073},{"className":"Sexy","probability":0.002069495851173997}]

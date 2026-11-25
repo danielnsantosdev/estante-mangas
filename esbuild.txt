@@ -1,0 +1,11 @@
+
+  ../../../../../tmp/out/nsfw.js  5.4mb ⚠️
+
+⚡ Done in 293ms
+total 5564
+drwxr-xr-x  2 runner runner    4096 Nov 25 01:52 .
+drwxrwxrwt 13 root   root      4096 Nov 25 01:52 ..
+-rw-r--r--  1 runner runner      67 Nov 25 01:52 esbuild.txt
+-rw-r--r--  1 runner runner    1651 Nov 25 01:52 install.txt
+-rw-r--r--  1 runner runner 5669093 Nov 25 01:52 nsfw.js
+-rw-r--r--  1 runner runner    4968 Nov 25 01:52 pacote.txt
