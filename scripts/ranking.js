@@ -36,6 +36,13 @@ const media = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 
 
 // Busca a obra no mesmo catálogo do app (AniList) quando o mangá não foi vinculado,
 // para o ranking ter sempre o nome popular e a capa oficial.
+// mesmo critério do app: mangá japonês → inglês (ou japonês); manhwa/manhua → português (ou inglês)
+function nomePopular(c) {
+  const jp = !c.tipo || c.tipo === "Mangá";
+  if (!c.nomes) return String(c.titulo2 || c.titulo || "").trim().slice(0, 120);   // catálogo antigo, sem a lista de nomes
+  const ord = jp ? [c.nomeEN, c.titulo, c.nomePT] : [c.nomePT, c.nomeEN, c.titulo];
+  return String(ord.find(x => x && String(x).trim()) || "").trim();
+}
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function distancia(a, b) {   // quantas letras trocar para um virar o outro (aceita erro de digitação)
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
@@ -163,7 +170,7 @@ async function buscaAniList(titulo) {
     if (chave.startsWith("md:")) { if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; } }
     else if (!chave.startsWith("nome:")) {
       const c = await db.collection("catalogo").doc(chave).get();
-      if (c.exists) { const d = c.data(); titulo = d.titulo2 || d.titulo || titulo; capa = d.capa || ""; }
+      if (c.exists) { const d = c.data(); titulo = nomePopular(d) || titulo; capa = d.capa || ""; }
       else if (o.aniList) { titulo = o.aniList.titulo2 || o.aniList.titulo || titulo; capa = o.aniList.capa; }
       else {
         const a = await buscaCatalogo(digitado); await sleep(2200);

@@ -372,7 +372,7 @@ a.btn{color:inherit;text-decoration:none}
 
 /* ---------- PC (tela larga): estante ocupa a tela, só com bordas laterais livres ---------- */
 @media (min-width:1100px){
-  :root{ --larg: min(calc(100vw - 2 * clamp(40px, 9vw, 240px)), 2200px); }
+  :root{ --larg: min(calc((100vw - 2 * clamp(40px, 9vw, 240px)) / var(--z,1)), 2200px); }
   .bar,.tools,main,.banner,.visitbar,.vitrine.visita{max-width:var(--larg)}
   main{padding:22px 0 120px}
   .grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:26px}
@@ -385,7 +385,7 @@ a.btn{color:inherit;text-decoration:none}
   .logo{font-size:36px}
 
   /* janela grande do Social */
-  .modal.wide{max-width:min(1300px, 92vw);height:min(92vh, 1000px);max-height:none}
+  .modal.wide{max-width:min(1300px, 92vw);max-height:none}
   .modal.wide .mhead h2{font-size:28px}
   .modal.wide .mbody{padding:22px 28px;gap:18px}
   .modal.wide .mbody > *, .modal.wide .sect > *{flex-shrink:0}
@@ -500,3 +500,49 @@ a.btn{color:inherit;text-decoration:none}
 .vtban.edit video{position:absolute;inset:0}
 .hdtag.peq{background:#b45309;color:#fff}
 .sohd{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700}
+
+/* aviso no card (só o dono vê) */
+.cwarn{position:absolute;bottom:8px;right:8px;z-index:3;width:30px;height:30px;border-radius:50%;border:2px solid var(--ink);background:#fde68a;font-size:15px;line-height:1;display:grid;place-items:center;padding:0;box-shadow:2px 2px 0 var(--ink);cursor:pointer}
+.cwarn.img{bottom:auto;top:50%;right:50%;transform:translate(50%,-50%);width:38px;height:38px;font-size:18px}
+.cover{position:relative}
+.nomecat{display:block;margin-top:5px;font-size:12px;font-weight:600;color:var(--muted)}
+.linkbtn{background:none;border:0;padding:0;color:var(--c-fim);font-weight:800;text-decoration:underline;cursor:pointer;font-size:12px}
+
+/* ---------- Aparência: cards por linha, texto, tema ---------- */
+.chiprow{display:flex;align-items:center;gap:8px}
+.chiprow .chips{flex:1;min-width:0}
+.gradebtn{flex:none}
+.gradebtn svg{fill:none;stroke:currentColor;stroke-width:2}
+html[data-cols] .grid{grid-template-columns:repeat(var(--cols),minmax(0,1fr))}
+html.dens-alta .foot{display:none}
+html.dens-alta .title{font-size:10.5px;min-height:24px}
+html.dens-alta .title .t2{display:none}
+html.dens-alta .chap button{width:18px;font-size:13px}
+html.dens-alta .chap .num small{display:none}
+html.dens-alta .chap .num b{font-size:14px}
+html.dens-alta .badge{font-size:0;padding:3px;gap:0}
+html.dens-alta .infob{transform:scale(.8);transform-origin:top right}
+html.dens-alta .grid{gap:8px}
+html[data-tema="claro"]{color-scheme:light;--paper:#f4efe5;--ink:#141414;--card:#fffdf8;--muted:#6d675d;--soft:#e9e2d4;--red:#e0312b;--c-lendo:#1f9d55;--c-fila:#7c3aed;--c-acum:#e08a00;--c-pausa:#dc2626;--c-fim:#2563eb}
+html[data-tema="escuro"]{color-scheme:dark;--paper:#141318;--ink:#efe9de;--card:#1f1d24;--muted:#a49e92;--soft:#2b2931;--red:#ff4b40;--c-lendo:#34c472;--c-fila:#a78bfa;--c-acum:#f5a524;--c-pausa:#f87171;--c-fim:#5b8cff}
+.apar .aparopts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.aparopt{display:flex;align-items:center;justify-content:center;gap:8px;border:var(--line);border-radius:10px;background:var(--card);padding:10px 8px;font-weight:800;font-size:14px;box-shadow:2px 2px 0 var(--ink)}
+.aparopt small{font-weight:600;color:var(--muted);font-size:11px}
+.aparopt.on{background:var(--ink);color:var(--card)}
+.aparopt.on small{color:var(--card)}
+.aparmini{display:grid;grid-template-columns:repeat(var(--n),5px);gap:2px}
+.aparmini i{width:5px;height:8px;border-radius:1px;background:currentColor}
+
+/* ---------- Social: altura fixa (celular) e quase toda a tela (PC) ---------- */
+.modal.wide{display:flex;flex-direction:column;overflow:hidden}
+.modal.wide .mhead,.modal.wide .mfoot{flex:none}
+.modal.wide .mbody{flex:1;min-height:0;overflow:auto}
+@media (max-width:520px){ .modal.wide{height:calc(92vh / var(--z,1))} }
+@media (min-width:1100px){ .modal.wide{height:calc((100vh - 40px) / var(--z,1))} }
+/* com texto maior (zoom), as alturas da tela são compensadas */
+.modal{max-height:calc((100vh - 32px) / var(--z,1))}
+@media (max-width:520px){ .modal{max-height:calc(92vh / var(--z,1))} }
+html.dens-alta .chap [data-act="minus"]{display:none}
+html.dens-alta .chap .num{border-left:0;padding:2px 0}
+html.dens-alta .chap .num b{font-size:12px}
+html.dens-alta .chap button{width:16px;font-size:12px}

@@ -29,6 +29,10 @@ service cloud.firestore {
     }
 
     // ---------- validações ----------
+    function nomesOk(d) {
+      return texto(d, 'nomeEN', 200) && texto(d, 'nomePT', 200)
+        && (!('nomes' in d) || (d.nomes is list && d.nomes.size() <= 30));
+    }
     function notaOk(n) { return n is number && n >= 1 && n <= 10 && math.floor(n * 2) == n * 2; }
     function texto(d, campo, max) { return !(campo in d) || (d[campo] is string && d[campo].size() <= max); }
     function camposManga(d) {
@@ -37,16 +41,16 @@ service cloud.firestore {
         && d.status in ['lendo', 'fila', 'acumulando', 'pausado', 'concluido']
         && texto(d, 'link', 2000) && texto(d, 'cover', 400000)
         && (!('nota' in d) || d.nota == null || notaOk(d.nota))
-        && texto(d, 'comentario', 300) && texto(d, 'catId', 40) && texto(d, 'titulo2', 200);
+        && texto(d, 'comentario', 300) && texto(d, 'catId', 40) && texto(d, 'titulo2', 200) && texto(d, 'alias', 1000);
     }
     function mangaValido() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'titulo2', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario'])
+      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario'])
         && camposManga(d);
     }
     function lixeiraValida() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['title', 'titulo2', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm'])
+      return d.keys().hasOnly(['title', 'titulo2', 'alias', 'catId', 'chapter', 'status', 'link', 'cover', 'createdAt', 'updatedAt', 'lastReadAt', 'nota', 'comentario', 'excluidoEm'])
         && camposManga(d) && d.excluidoEm is number;
     }
     // Nota que um visitante deixa: { nota, apelido (o dele, de verdade), em }
@@ -165,15 +169,20 @@ service cloud.firestore {
       allow read: if acesso();
       allow create: if acesso()
         && id.matches('^(al|mal)[0-9]{1,10}$')
-        && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm'])
+        && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm', 'nomeEN', 'nomePT', 'nomes'])
+        && nomesOk(request.resource.data)
         && request.resource.data.titulo is string && request.resource.data.titulo.size() > 0 && request.resource.data.titulo.size() <= 200
         && texto(request.resource.data, 'titulo2', 200) && texto(request.resource.data, 'sinopse', 4000)
         && texto(request.resource.data, 'sinopseOrig', 4000) && texto(request.resource.data, 'capa', 500)
         && request.resource.data.generos is list && request.resource.data.generos.size() <= 15;
-      // só dá para completar a tradução de uma sinopse que ainda está pendente
-      allow update: if acesso() && resource.data.sinopse == ''
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sinopse', 'atualizadoEm'])
-        && texto(request.resource.data, 'sinopse', 4000);
+      // só dá para completar a tradução de uma sinopse pendente, ou acrescentar os nomes da obra (uma vez)
+      allow update: if acesso() && (
+        (resource.data.sinopse == ''
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sinopse', 'atualizadoEm'])
+          && texto(request.resource.data, 'sinopse', 4000))
+        || (!('nomes' in resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nomeEN', 'nomePT', 'nomes', 'atualizadoEm'])
+          && nomesOk(request.resource.data)));
     }
 
     // ---------- ranking (calculado todo dia 1 pelo GitHub; o app só lê) ----------

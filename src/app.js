@@ -263,6 +263,7 @@ function clean(it) {
   const o = {
     title: String(it.title || "").trim().slice(0, 120) || "Sem nome",
     titulo2: String(it.titulo2 || "").trim().slice(0, 200),
+    alias: String(it.alias || "").trim().slice(0, 1000),
     catId: /^(al|mal)[0-9]{1,10}$/.test(String(it.catId || "")) ? String(it.catId) : "",
     chapter: Math.min(99999, parseCap(it.chapter)),
     status: stOf(it),
@@ -326,8 +327,8 @@ async function fetchPage(url) {
   const nativeHttp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
   const job = window.estanteNative ? window.estanteNative.fetchText(url)
     : nativeHttp ? nativeHttp.request({ url, method: "GET", headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Mobile Safari/537.36" }, responseType: "text" })
-        .then(r => { if (r.status >= 400) throw new Error("http"); return typeof r.data === "string" ? r.data : JSON.stringify(r.data || ""); })
-    : fetch(url, { headers: { Accept: "text/html" } }).then(r => { if (!r.ok) throw new Error("http"); return r.text(); });
+        .then(r => { if (r.status >= 400) throw new Error("http " + r.status); return typeof r.data === "string" ? r.data : JSON.stringify(r.data || ""); })
+    : fetch(url, { headers: { Accept: "text/html" } }).then(r => { if (!r.ok) throw new Error("http " + r.status); return r.text(); });
   return Promise.race([job, new Promise((_, rej) => setTimeout(() => rej(new Error("tempo")), 15000))]);
 }
 // Procura o maior número de capítulo na página (links "capitulo-427" e textos "Capítulo 427").
@@ -349,16 +350,27 @@ async function checkNewChapters() {
       const it = list[i++];
       try {
         const n = latestFromHtml(await fetchPage(fixLink(it.link)));
+        if (chk[it.id] && chk[it.id].falhas) { delete chk[it.id].falhas; saveChk(); render(); }   // voltou a funcionar
         if (n == null) continue;
         const c = chk[it.id] || {};
         if (c.seen == null) c.seen = n;      // primeira vez: só marca a referência
         c.latest = n; c.t = Date.now(); chk[it.id] = c;
         saveChk(); render();
-      } catch (e) { /* site não deixou ler: ignora em silêncio */ }
+      } catch (e) {
+        // Só conta como "link com problema" quando a página não existe (404/410) ou o endereço não responde.
+        // Site que bloqueia leitura automática (403, 429, 5xx) não gera aviso: ele abre normal no navegador.
+        const m = String((e && e.message) || ""); const cod = Number((m.match(/http (\d{3})/) || [])[1] || 0);
+        if (cod && cod !== 404 && cod !== 410) continue;
+        const c = chk[it.id] || {}; const dia = new Date().toISOString().slice(0, 10);
+        c.falhas = [...new Set([...(c.falhas || []), dia])].slice(-3); c.t = Date.now(); chk[it.id] = c;
+        saveChk(); render();
+      }
     }
   };
   await Promise.all([worker(), worker(), worker()]);
 }
+// link com problema: falhou em 2 dias diferentes seguidos, sem funcionar no meio
+const linkComProblema = (it) => { const c = chk[it.id]; return !!(c && c.falhas && c.falhas.length >= 2 && fixLink(it.link)); };
 function unreadBadge(it) {
   const c = chk[it.id]; const cur = Number(it.chapter) || 0;
   if (!c || c.latest == null || c.seen == null) return 0;
@@ -409,13 +421,13 @@ function limpaSinopse(s) {
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500);
 }
 async function buscaAniList(q) {
-  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} coverImage{large} genres description(asHtml:false) countryOfOrigin format}}}`;
+  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format}}}`;
   const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
   return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.format !== "NOVEL").map(m => ({
     key: m.idMal ? "mal" + m.idMal : "al" + m.id, alId: m.id, malId: m.idMal || null,
     original: (m.title.romaji || m.title.english || "").trim(), ingles: (m.title.english || "").trim(),
     capa: (m.coverImage && m.coverImage.large) || "", generos: generosPT(m.genres), desc: m.description || "",
-    tipo: TIPO[m.countryOfOrigin] || "Mangá",
+    tipo: TIPO[m.countryOfOrigin] || "Mangá", sinonimos: (m.synonyms || []).filter(x => typeof x === "string"),
   }));
 }
 async function buscaMAL(q) {
@@ -426,6 +438,7 @@ async function buscaMAL(q) {
     capa: (m.images && m.images.jpg && m.images.jpg.large_image_url) || "",
     generos: generosPT([...(m.genres || []), ...(m.themes || []), ...(m.demographics || [])].map(g => g.name)),
     desc: m.synopsis || "", tipo: /manhwa/i.test(m.type || "") ? "Manhwa" : /manhua/i.test(m.type || "") ? "Manhua" : "Mangá",
+    sinonimos: [...(m.title_synonyms || []), ...((m.titles || []).map(t => t.title))].filter(x => typeof x === "string"),
   }));
 }
 async function buscaCatalogo(q) {
@@ -458,8 +471,10 @@ async function mangaDexPT(r) {
     const j = await httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(r.original)}&contentRating[]=safe&contentRating[]=suggestive`);
     const m = (j.data || []).find(x => { const l = (x.attributes && x.attributes.links) || {}; return (r.alId && String(l.al) === String(r.alId)) || (r.malId && String(l.mal) === String(r.malId)); });
     if (!m) return {};
-    const alt = (m.attributes.altTitles || []).find(t => t["pt-br"]);
-    return { titulo: alt ? alt["pt-br"] : "", sinopse: (m.attributes.description || {})["pt-br"] || "" };
+    const alts = m.attributes.altTitles || [];
+    const alt = alts.find(t => t["pt-br"]);
+    const nomes = [...Object.values(m.attributes.title || {}), ...alts.filter(t => t["pt-br"] || t.en || t["ja-ro"] || t["ko-ro"] || t["zh-ro"]).flatMap(t => Object.values(t))];
+    return { titulo: alt ? alt["pt-br"] : "", sinopse: (m.attributes.description || {})["pt-br"] || "", nomes };
   } catch (e) { return {}; }
 }
 const catCache = {};
@@ -469,17 +484,37 @@ async function lerCatalogo(key) {
   try { const d = await getDoc(doc(db, "catalogo", key)); if (d.exists()) return (catCache[key] = d.data()); } catch (e) {}
   return null;
 }
+// Nome mais conhecido: mangá japonês → nome em inglês (ou o japonês); manhwa/manhua → português (ou inglês)
+function nomePopular(c) {
+  const jp = !c.tipo || c.tipo === "Mangá";
+  if (!c.nomes) return String(c.titulo2 || c.titulo || "").trim().slice(0, 120);   // catálogo antigo, sem a lista de nomes
+  const ord = jp ? [c.nomeEN, c.titulo, c.nomePT] : [c.nomePT, c.nomeEN, c.titulo];
+  return String(ord.find(x => x && String(x).trim()) || c.titulo || "").trim().slice(0, 120);
+}
+// segundo nome (o menor, embaixo): o nome conhecido do catálogo que for diferente do que está em cima
+function nomeSecundario(c, principal) {
+  return String([nomePopular(c), c.nomeEN, c.nomePT, c.titulo].find(x => x && norm(x) !== norm(principal)) || "").trim().slice(0, 200);
+}
+const listaNomes = (arr) => { const v = new Set(), out = []; for (const x of arr) { const t = String(x || "").trim(); if (t && t.length <= 200 && !v.has(norm(t))) { v.add(norm(t)); out.push(t); } } return out.slice(0, 30); };
+const aliasDe = (c) => (c.nomes || []).join(" | ").slice(0, 1000);
 // Garante que o mangá escolhido está no catálogo compartilhado, já em português
 async function prepararCatalogo(r) {
   const salvo = await lerCatalogo(r.key);
-  if (salvo) return salvo;
+  if (salvo && salvo.nomes) return salvo;
   const pt = await mangaDexPT(r);
+  const nomes = listaNomes([r.original, r.ingles, pt.titulo, ...(pt.nomes || []), ...(r.sinonimos || [])]);
+  if (salvo) {   // catálogo antigo, sem os nomes: completa
+    const extra = { nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, atualizadoEm: Date.now() };
+    try { await updateDoc(doc(db, "catalogo", r.key), extra); } catch (e) {}
+    return (catCache[r.key] = { ...salvo, ...extra });
+  }
   const orig = limpaSinopse(r.desc);
   let sinopse = limpaSinopse(pt.sinopse || "");
   if (!sinopse && orig) { try { sinopse = await traduzPT(orig); } catch (e) { sinopse = ""; } }
   const titulo2 = (pt.titulo && norm(pt.titulo) !== norm(r.original) ? pt.titulo : (r.ingles && norm(r.ingles) !== norm(r.original) ? r.ingles : "")).slice(0, 200);
   const c = { titulo: r.original.slice(0, 200), titulo2, generos: r.generos, sinopse: sinopse.slice(0, 4000), sinopseOrig: sinopse ? "" : orig.slice(0, 4000),
-    capa: String(r.capa || "").slice(0, 500), tipo: r.tipo, alId: r.alId || null, malId: r.malId || null, atualizadoEm: Date.now() };
+    capa: String(r.capa || "").slice(0, 500), tipo: r.tipo, alId: r.alId || null, malId: r.malId || null, atualizadoEm: Date.now(),
+    nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes };
   try { await setDoc(doc(db, "catalogo", r.key), c); } catch (e) {}
   return (catCache[r.key] = c);
 }
@@ -527,7 +562,7 @@ function montarBuscaCatalogo(root, inicial, aoEscolher) {
 const source = () => ui.visit ? ui.visit.items : items;
 function filtered() {
   const q = norm(ui.q);
-  const arr = [...source().values()].filter(it => (ui.filter === "todos" || stOf(it) === ui.filter) && (!q || norm(it.title).includes(q)));
+  const arr = [...source().values()].filter(it => (ui.filter === "todos" || stOf(it) === ui.filter) && (!q || norm(`${it.title} | ${it.titulo2 || ""} | ${it.alias || ""}`).includes(q)));
   if (ui.sort === "name") arr.sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
   else if (ui.sort === "stale") arr.sort((a, b) => (a.lastReadAt || 0) - (b.lastReadAt || 0));
   else if (ui.sort === "nota") arr.sort((a, b) => (parseNota(b.nota) || 0) - (parseNota(a.nota) || 0) || norm(a.title).localeCompare(norm(b.title)));
@@ -550,6 +585,7 @@ function cardHTML(it) {
   const st = stOf(it), visit = !!ui.visit;
   const cv = safeCover(it.cover), lk = fixLink(it.link);
   const cover = cv ? `<img src="${esc(cv)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>` : phHTML(it.title);
+  const avisoLink = !visit && linkComProblema(it) ? `<button type="button" class="cwarn" data-act="warnlink" title="O link deste mangá não está funcionando">⚠️</button>` : "";
   const days = it.lastReadAt ? (Date.now() - it.lastReadAt) / 86400000 : 0;
   const old = !visit && days > 60 && st !== "concluido" && st !== "fila";
   const link = lk ? `<a class="mini read" data-act="read" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" title="Abrir site">Ler<span class="arr"> ↗</span></a>` : "";
@@ -564,7 +600,7 @@ function cardHTML(it) {
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
     : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span>${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
+    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
       <div class="title" title="${esc(it.title)}${it.titulo2 ? " — " + esc(it.titulo2) : ""}"><span class="t1">${esc(it.title)}</span>${it.titulo2 ? `<span class="t2">${esc(it.titulo2)}</span>` : ""}</div>
       ${chap}
@@ -589,7 +625,10 @@ function render() {
   grid.innerHTML = arr.map(cardHTML).join("");
   grid.querySelectorAll("img[data-fallback]").forEach(img => img.addEventListener("error", () => {
     const card = img.closest(".card"); const it = card && source().get(card.dataset.id);
+    const cov = img.parentElement;
     img.outerHTML = phHTML(it ? it.title : "?");
+    // a capa não abriu: avisa só o dono do mangá
+    if (!ui.visit && cov && !cov.querySelector('[data-act="warnimg"]')) cov.insertAdjacentHTML("beforeend", `<button type="button" class="cwarn img" data-act="warnimg" title="A imagem desta capa não abriu">⚠️</button>`);
   }, { once: true }));
   if (ui.visit && !source().size) empty.innerHTML = `<div class="empty"><p>A estante de @${esc(ui.visit.apelido)} está vazia.</p></div>`;
   else if (!source().size) empty.innerHTML = `<div class="empty"><div class="big">Estante vazia!</div><p>Adicione o primeiro mangá que você está lendo — nome, capítulo e, se quiser, uma capa.</p><button class="btn primary" id="emptyAdd">+ Adicionar mangá</button></div>`;
@@ -642,7 +681,7 @@ async function imageToCover(blob) {
 function openEditor(id) {
   const it = id ? items.get(id) : null;
   let cover = it ? it.cover || "" : "";
-  let catId = it ? it.catId || "" : "", titulo2 = it ? it.titulo2 || "" : "";
+  let catId = it ? it.catId || "" : "", titulo2 = it ? it.titulo2 || "" : "", alias = it ? it.alias || "" : "", catNome = "", catSel = null;
   let confirmDel = false;
   const opts = Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(it ? stOf(it) : "lendo") === k ? "selected" : ""}>${v.label}</option>`).join("");
   openModal(`
@@ -654,7 +693,7 @@ function openEditor(id) {
           <div id="catPick"></div>
           <div id="catBox">${it ? `<button type="button" class="btn" id="catLink">🔗 ${catId ? "Trocar vínculo do catálogo" : "Vincular ao catálogo"}</button>` : ""}</div>
         </div>
-        <label class="f">Nome<input name="title" required maxlength="120" placeholder="Ex.: One Piece" value="${esc(it ? it.title : "")}"></label>
+        <label class="f">Nome<input name="title" required maxlength="120" placeholder="Ex.: One Piece" value="${esc(it ? it.title : "")}"><small class="nomecat" id="nomeCat"></small></label>
         <div class="two">
           <label class="f">Último capítulo lido<input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"></label>
           <label class="f">Status<select name="status">${opts}</select></label>
@@ -695,11 +734,20 @@ function openEditor(id) {
     const pick = root.querySelector("#catPick");
     const mostrarEscolha = (c) => {
       pick.innerHTML = c ? `<div class="catchosen">${c.capa ? `<img src="${esc(c.capa)}" alt="" referrerpolicy="no-referrer">` : ""}<div><b>${esc(c.titulo)}</b>${c.titulo2 ? `<small>${esc(c.titulo2)}</small>` : ""}<em>${esc(c.tipo || "")}${(c.generos || []).length ? " · " + esc(c.generos.slice(0, 4).join(", ")) : ""}</em></div><button type="button" class="mini" id="catUnlink" title="Desvincular">✕</button></div>` : "";
-      const un = pick.querySelector("#catUnlink"); if (un) un.onclick = () => { catId = ""; titulo2 = ""; mostrarEscolha(null); root.querySelector("#catStatus").textContent = ""; };
+      const un = pick.querySelector("#catUnlink"); if (un) un.onclick = () => { catId = ""; titulo2 = ""; alias = ""; catNome = ""; mostrarEscolha(null); root.querySelector("#catStatus").textContent = ""; dicaNome(); };
+      if (c) { catSel = c; catNome = nomePopular(c); dicaNome(); }
     };
+    const dica = root.querySelector("#nomeCat");
+    const dicaNome = () => {
+      if (!catId || !catNome) { dica.innerHTML = ""; return; }
+      dica.innerHTML = norm(titleInput.value) === norm(catNome) ? `Nome do catálogo. Você pode trocar à vontade: o vínculo continua.`
+        : `Nome no catálogo: <b>${esc(catNome)}</b> · <button type="button" class="linkbtn" id="usarCat">Usar nome do catálogo</button>`;
+      const u = dica.querySelector("#usarCat"); if (u) u.onclick = () => { titleInput.value = catNome; dicaNome(); };
+    };
+    titleInput.addEventListener("input", dicaNome);
     const aoEscolher = (key, c) => {
-      catId = key; titulo2 = c.titulo2 || "";
-      titleInput.value = c.titulo; mostrarEscolha(c);
+      catId = key; catNome = nomePopular(c); titulo2 = nomeSecundario(c, catNome); alias = aliasDe(c);
+      titleInput.value = catNome; mostrarEscolha(c);
       root.querySelector("#catStatus").textContent = "vinculado ✓";
       if (!cover && c.capa) { cover = c.capa; paintCover(); }
     };
@@ -781,7 +829,8 @@ function openEditor(id) {
       const rawLink = String(fd.get("link") || "").trim();
       const link = fixLink(rawLink);
       if (rawLink && !link) { toast("Esse link não parece válido."); return; }
-      const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "",
+      if (catId && catSel) titulo2 = nomeSecundario(catSel, title);   // nome próprio: embaixo fica o nome conhecido do catálogo
+      const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "", alias: catId ? alias : "",
         nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
       if (it) {
         const patch = { ...data };
@@ -1200,7 +1249,7 @@ function openInfo(mid) {
     };
     const cp = root.querySelector("#copyShelf");
     if (cp && !jaTenho) cp.onclick = () => {
-      create({ title: it.title, titulo2: it.titulo2 || "", catId: it.catId || "", cover: safeCover(it.cover), link: fixLink(it.link), status: "fila", chapter: 0, nota: null, comentario: "" });
+      create({ title: it.title, titulo2: it.titulo2 || "", alias: it.alias || "", catId: it.catId || "", cover: safeCover(it.cover), link: fixLink(it.link), status: "fila", chapter: 0, nota: null, comentario: "" });
       toast("Adicionado à sua estante em Na fila!"); openInfo(mid);
     };
   });
@@ -1881,6 +1930,25 @@ function openReports() {
   });
 }
 
+// aviso do card: explica o problema e leva ao editor
+function avisoCard(id, tipo) {
+  const it = items.get(id); if (!it) return;
+  const img = tipo === "warnimg";
+  openModal(`
+    <div class="mhead"><h2>⚠️ ${img ? "Capa com problema" : "Link com problema"}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><p style="margin:0;line-height:1.5">${img
+      ? `A imagem da capa de <b>${esc(it.title)}</b> não abriu. O site de onde ela veio pode ter tirado a imagem do ar. Troque por outra (galeria, link ou “Buscar imagem”).`
+      : `O link de <b>${esc(it.title)}</b> não está funcionando há pelo menos 2 dias: a página não existe mais ou o site não responde. Confira o endereço e coloque o link novo.`}</p>
+      ${img ? "" : `<p class="hint" style="margin:8px 0 0">Link atual: ${esc(fixLink(it.link))}</p>`}</div>
+    <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Agora não</button><button type="button" class="btn primary" id="avGo">${img ? "Trocar capa" : "Editar link"}</button></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelector("#avGo").onclick = () => {
+      openEditor(id);
+      setTimeout(() => { const el = document.querySelector(img ? ".cover-edit" : '#ed [name="link"]'); if (el) { el.scrollIntoView({ block: "center" }); if (!img) el.focus(); } }, 120);
+    };
+  });
+}
+
 // ---------- eventos ----------
 $("#grid").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]"); if (!btn) return;
@@ -1894,6 +1962,7 @@ $("#grid").addEventListener("click", (e) => {
   const c = Number(it.chapter) || 0;
   if (act === "read") { markSeen(id); return; }
   if (act === "info") { e.preventDefault(); openInfo(id); return; }
+  if (act === "warnimg" || act === "warnlink") { e.preventDefault(); e.stopPropagation(); avisoCard(id, act); return; }
   if (act === "plus") commit(id, { chapter: Math.floor(c) + 1, lastReadAt: Date.now() });
   else if (act === "minus") { if (c > 0) commit(id, { chapter: Math.max(0, Math.ceil(c) - 1), lastReadAt: Date.now() }); }
   else if (act === "goto") openGoto(id);
@@ -1906,6 +1975,59 @@ $("#addBtn").addEventListener("click", () => openEditor(null));
 $("#empty").addEventListener("click", (e) => { if (e.target.id === "emptyAdd") openEditor(null); });
 $("#menuBtn").addEventListener("click", openMenu);
 $("#peopleBtn").addEventListener("click", () => openPeople("perfil"));
+// ---------- Aparência (por aparelho): cards por linha, tamanho do texto e tema ----------
+const APAR_KEY = "estante-aparencia-v1";
+const APAR = { pc: [4, 6, 8, 12], cel: [2, 3, 4, 5], texto: { normal: ["Normal", 1], grande: ["Grande", 1.15], extra: ["Extra grande", 1.3] }, tema: { sistema: "Do sistema", claro: "Claro", escuro: "Escuro" } };
+let apar = {};
+try { apar = JSON.parse(localStorage.getItem(APAR_KEY) || "{}") || {}; } catch (e) { apar = {}; }
+const modoTela = () => window.matchMedia("(max-width: 520px)").matches ? "cel" : "pc";
+function aplicarAparencia() {
+  const h = document.documentElement, modo = modoTela();
+  const cols = modo === "cel" ? apar.colsCel : apar.colsPC;
+  if (cols && APAR[modo].includes(cols)) { h.dataset.cols = cols; h.style.setProperty("--cols", cols); }
+  else { delete h.dataset.cols; h.style.removeProperty("--cols"); }
+  // cards bem pequenos: esconde o rodapé e compacta (celular 4-5, PC 12)
+  h.classList.toggle("dens-alta", !!cols && ((modo === "cel" && cols >= 4) || (modo === "pc" && cols >= 12)));
+  const z = (APAR.texto[apar.texto] || APAR.texto.normal)[1];
+  document.body.style.zoom = z === 1 ? "" : String(z);
+  // alguns navegadores aumentam também a altura "100vh" com o zoom: mede e compensa só quando precisa
+  let fator = 1;
+  if (z !== 1) { const pr = document.createElement("div"); pr.style.cssText = "position:fixed;top:0;left:0;width:1px;height:100vh;visibility:hidden"; document.body.appendChild(pr); const alt = pr.getBoundingClientRect().height; pr.remove(); if (alt > window.innerHeight * 1.05) fator = z; }
+  h.style.setProperty("--z", String(fator));
+  if (apar.tema === "claro" || apar.tema === "escuro") h.dataset.tema = apar.tema; else delete h.dataset.tema;
+}
+const salvarAparencia = () => { try { localStorage.setItem(APAR_KEY, JSON.stringify(apar)); } catch (e) {} aplicarAparencia(); };
+aplicarAparencia();
+window.matchMedia("(max-width: 520px)").addEventListener("change", aplicarAparencia);
+function openAparencia() {
+  const modo = modoTela(), chaveCols = modo === "cel" ? "colsCel" : "colsPC", padrao = modo === "cel" ? 3 : 6;
+  openModal(`
+    <div class="mhead"><h2>Aparência</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody apar">
+      <p class="hint" style="margin:0">Vale só para este aparelho. A estante muda na hora.</p>
+      <div class="sect"><div class="secth">Mangás por linha</div>
+        <div class="aparopts" data-k="cols">${APAR[modo].map(n => `<button type="button" class="aparopt" data-v="${n}"><span class="aparmini" style="--n:${Math.min(n, 6)}">${"<i></i>".repeat(Math.min(n, 6))}</span>${n}${n === padrao ? " <small>(padrão)</small>" : ""}</button>`).join("")}</div></div>
+      <div class="sect"><div class="secth">Tamanho do texto</div>
+        <div class="aparopts" data-k="texto">${Object.entries(APAR.texto).map(([k, v]) => `<button type="button" class="aparopt" data-v="${k}"><span style="font-size:${Math.round(14 * v[1])}px;font-weight:900">Aa</span> ${v[0]}</button>`).join("")}</div></div>
+      <div class="sect"><div class="secth">Tema</div>
+        <div class="aparopts" data-k="tema">${Object.entries(APAR.tema).map(([k, v]) => `<button type="button" class="aparopt" data-v="${k}">${k === "claro" ? "☀️" : k === "escuro" ? "🌙" : "📱"} ${v}</button>`).join("")}</div></div>
+    </div>
+    <div class="mfoot"><button type="button" class="btn ghost" id="aparReset">Voltar ao padrão</button><span class="grow"></span><button type="button" class="btn primary" data-x>Pronto</button></div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    const marca = () => {
+      const atual = { cols: String(apar[chaveCols] || padrao), texto: apar.texto || "normal", tema: apar.tema || "sistema" };
+      root.querySelectorAll(".aparopts").forEach(g => g.querySelectorAll(".aparopt").forEach(b => b.classList.toggle("on", b.dataset.v === atual[g.dataset.k])));
+    };
+    root.querySelectorAll(".aparopts").forEach(g => g.querySelectorAll(".aparopt").forEach(b => b.onclick = () => {
+      const k = g.dataset.k, v = b.dataset.v;
+      if (k === "cols") apar[chaveCols] = Number(v); else apar[k] = v;
+      salvarAparencia(); marca();
+    }));
+    root.querySelector("#aparReset").onclick = () => { apar = {}; salvarAparencia(); marca(); };
+    marca();
+  });
+}
+$("#aparBtn").addEventListener("click", openAparencia);
 // No PC (tela larga), a busca e a ordenação sobem para a barra do logo; no celular ficam embaixo
 (function posicionaBusca() {
   const mq = window.matchMedia("(min-width: 1100px)");
