@@ -216,16 +216,69 @@ service cloud.firestore {
     // ---------- denúncias: uma por pessoa, por mangá ----------
     match /denuncias/{id} {
       allow create: if acesso()
-        && request.resource.data.keys().hasOnly(['de', 'apelidoDe', 'alvo', 'alvoApelido', 'mangaId', 'titulo', 'motivo', 'texto', 'criadoEm', 'resolvido'])
+        && request.resource.data.keys().hasOnly(['de', 'apelidoDe', 'alvo', 'alvoApelido', 'mangaId', 'titulo', 'motivo', 'texto', 'criadoEm', 'resolvido', 'tipo', 'sala', 'msgId', 'trecho'])
+        && texto(request.resource.data, 'tipo', 10) && texto(request.resource.data, 'sala', 10) && texto(request.resource.data, 'msgId', 40) && texto(request.resource.data, 'trecho', 300)
         && request.resource.data.de == request.auth.uid
         && id == request.auth.uid + '_' + request.resource.data.alvo + '_' + request.resource.data.mangaId
-        && request.resource.data.motivo in ['capa', 'nome', 'comentario', 'spam', 'outro']
+        && request.resource.data.motivo in ['capa', 'nome', 'comentario', 'spam', 'outro', 'ofensa', 'spoiler', 'improprio']
         && texto(request.resource.data, 'texto', 300) && texto(request.resource.data, 'titulo', 120)
         && texto(request.resource.data, 'apelidoDe', 30) && texto(request.resource.data, 'alvoApelido', 30)
         && request.resource.data.alvo is string && request.resource.data.alvo.size() <= 128
         && request.resource.data.mangaId is string && request.resource.data.mangaId.size() <= 100
         && request.resource.data.criadoEm is number && request.resource.data.resolvido == false;
       allow read, update, delete: if admin();
+    }
+
+    // ---------- fórum: 3 salas, mensagens apagadas depois de 7 dias pelo GitHub ----------
+    function salaOk(s) { return s in ['geral', 'rec', 'spo']; }
+    function fu(uid) { return /databases/$(database)/documents/forumUsers/$(uid); }
+    match /forum/{sala}/msgs/{id} {
+      allow read: if acesso() && salaOk(sala);
+      allow create: if acesso() && salaOk(sala)
+        && request.resource.data.keys().hasOnly(['uid', 'apelido', 'texto', 'spoiler', 'gif', 'resp', 'criadoEm', 'ts'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.ts == request.time
+        && request.resource.data.criadoEm is number
+        && request.resource.data.texto is string && request.resource.data.texto.size() <= 500
+        && request.resource.data.spoiler is bool && (sala != 'spo' || request.resource.data.spoiler == true)
+        && (!('gif' in request.resource.data) || (request.resource.data.gif is string && request.resource.data.gif.size() <= 600 && request.resource.data.gif.matches('^https://[^ ]+$')))
+        && (request.resource.data.texto.size() > 0 || 'gif' in request.resource.data)
+        && (!('resp' in request.resource.data) || (request.resource.data.resp is map && request.resource.data.resp.keys().hasOnly(['uid', 'apelido', 'trecho'])
+            && texto(request.resource.data.resp, 'apelido', 30) && texto(request.resource.data.resp, 'trecho', 120) && texto(request.resource.data.resp, 'uid', 128)))
+        && exists(/databases/$(database)/documents/perfis/$(request.auth.uid))
+        && request.resource.data.apelido == get(/databases/$(database)/documents/perfis/$(request.auth.uid)).data.apelido
+        // 1 mensagem a cada 5 segundos, e não pode estar silenciado
+        && getAfter(fu(request.auth.uid)).data.ultima == request.time
+        && (!exists(fu(request.auth.uid)) || (
+              request.time > get(fu(request.auth.uid)).data.get('ultima', timestamp.value(0)) + duration.value(5, 's')
+              && get(fu(request.auth.uid)).data.get('silenciadoAte', timestamp.value(0)) < request.time));
+      // o administrador apaga (a mensagem vira "apagada pelo administrador")
+      allow update: if admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['apagada', 'texto', 'gif'])
+        && request.resource.data.apagada == true && request.resource.data.texto == '';
+      allow delete: if admin();
+    }
+    // controle de envio (hora da última mensagem) e silêncio (só o administrador muda)
+    match /forumUsers/{uid} {
+      allow get: if dono(uid) || admin();
+      allow create: if dono(uid) && acesso() && request.resource.data.keys().hasOnly(['ultima']) && request.resource.data.ultima == request.time;
+      allow update: if dono(uid) && acesso() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ultima']) && request.resource.data.ultima == request.time;
+      allow create: if admin() && request.resource.data.keys().hasOnly(['silenciadoAte']) && request.resource.data.silenciadoAte is timestamp;
+      allow update: if admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['silenciadoAte'])
+        && (!('silenciadoAte' in request.resource.data) || request.resource.data.silenciadoAte is timestamp);
+    }
+    // avisos no sino (menções e respostas no fórum): quem escreve cria, o dono lê e apaga
+    match /users/{uid}/avisos/{id} {
+      allow read, delete: if dono(uid);
+      allow create: if acesso() && !dono(uid)
+        && request.resource.data.keys().hasOnly(['tipo', 'de', 'apelido', 'sala', 'trecho', 'em'])
+        && request.resource.data.de == request.auth.uid
+        && request.resource.data.tipo in ['mencao', 'resposta'] && salaOk(request.resource.data.sala)
+        && texto(request.resource.data, 'apelido', 30) && texto(request.resource.data, 'trecho', 120) && request.resource.data.em is number;
+    }
+    // preferências do fórum (Não perturbe)
+    match /users/{uid}/config/{id} {
+      allow read: if dono(uid);
+      allow write: if dono(uid) && request.resource.data.keys().hasOnly(['dnd']) && request.resource.data.dnd is bool;
     }
 
     // Qualquer outra coisa: bloqueado.

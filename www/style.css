@@ -649,3 +649,99 @@ button.rkl{cursor:pointer}
   .rkgbar button{font-size:14px;padding:8px 2px 10px}
   .rkgconteudo .rkcap{max-width:960px;width:100%;margin-left:auto;margin-right:auto}
 }
+
+/* ---------- Fórum ---------- */
+.mbody.mbforum{overflow:hidden!important;display:flex;flex-direction:column}
+.forum{flex:1;min-height:0;display:flex;border:var(--line);border-radius:12px;overflow:hidden;background:var(--paper)}
+.fsalas{width:250px;flex:none;border-right:var(--line);background:var(--card);display:flex;flex-direction:column;overflow:auto}
+.fsalash{height:50px;flex:none;display:flex;align-items:center;padding:0 16px;background:#141414;color:#f4efe5;text-transform:uppercase;font-size:13px;letter-spacing:2.4px;font-weight:700}
+.fsala{display:flex;flex-direction:column;gap:3px;text-align:left;border:0;border-bottom:1px solid var(--soft);background:none;padding:14px 16px;position:relative;color:inherit;font:inherit;width:100%;border-radius:0;box-shadow:none}
+.fsala b{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}
+.fsala small{font-size:12px;color:var(--muted);font-weight:500;line-height:1.35}
+.fult{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fsala.on{background:var(--paper)}
+.fsala.on::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--ink)}
+.fnlid{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--ink);color:var(--paper);font-size:11px;font-weight:700;display:inline-grid;place-items:center}
+.fsalasfoot{margin-top:auto;padding:14px 16px;border-top:1px solid var(--soft);display:flex;flex-direction:column;gap:10px}
+.fsw{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;cursor:pointer}
+.fsw input{display:none}
+.fsl{width:36px;height:20px;border-radius:999px;border:1.5px solid var(--ink);background:var(--soft);position:relative;flex:none;transition:.15s}
+.fsl::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--ink);transition:.15s}
+.fsw input:checked + .fsl{background:var(--ink)}
+.fsw input:checked + .fsl::after{left:18px;background:var(--paper)}
+.fsw small{display:block;font-size:11px;color:var(--muted);font-weight:500}
+.fregras{font-size:12px;color:var(--muted);text-decoration:underline;background:none;border:0;padding:0;text-align:left;font-weight:500;cursor:pointer}
+.fconv{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--paper)}
+.fconvh{height:50px;flex:none;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:var(--line);background:var(--card)}
+.fconvh b{font-size:15px}
+.fconvh small{font-size:12px;color:var(--muted);font-weight:500;margin-left:auto;text-align:right}
+.fvoltar{border:0;background:none;font-weight:700;font-size:14px;padding:0 4px 0 0;color:inherit;cursor:pointer}
+.fmsgs{flex:1;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.fdia{align-self:center;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px}
+.fvazio{color:var(--muted);font-size:13px;text-align:center;margin:30px 0}
+.fmsg{display:flex;gap:10px;align-items:flex-start;position:relative;flex-wrap:wrap}
+.fav{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--ink);display:grid;place-items:center;font-weight:700;color:#fff;flex:none;font-size:14px;overflow:hidden}
+.fav img{width:100%;height:100%;object-fit:cover}
+.fmc{flex:1;min-width:0}
+.fmt{display:flex;align-items:baseline;gap:8px}
+.fmt b{font-size:13.5px}
+.fmt time{font-size:11px;color:var(--muted);font-weight:500}
+.fbal{margin-top:3px;font-size:14px;line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap}
+.fmen{background:#fde68a;color:#141414;border-radius:4px;padding:0 3px;font-weight:600}
+.fmsg.pramim .fmc{border-left:3px solid #f0c94a;padding-left:8px}
+.fcit{font-size:12px;color:var(--muted);border-left:2px solid var(--soft);padding-left:8px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fspo{display:inline-block;background:#1e1e1e;color:transparent;border-radius:6px;padding:6px 10px;cursor:pointer;position:relative;user-select:none;min-width:200px}
+.fspo img{visibility:hidden}
+.fspo::after{content:"Spoiler · toque para ver";position:absolute;inset:0;display:grid;place-items:center;color:#f4efe5;font-size:12px;font-weight:600}
+.fspo.ver{background:none;color:inherit;padding:0;cursor:default;min-width:0}
+.fspo.ver img{visibility:visible}
+.fspo.ver::after{display:none}
+.fgif{display:block;max-width:240px;max-height:180px;border-radius:10px;border:1.5px solid var(--ink);margin-top:3px}
+.facoes{position:absolute;right:0;top:-8px;display:none;gap:4px;background:var(--card);border:1.5px solid var(--ink);border-radius:999px;padding:2px 4px}
+.fmsg:hover .facoes,.fmsg.aberta .facoes{display:flex}
+.facoes button{border:0;background:none;font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:999px;color:inherit;cursor:pointer}
+.facoes button:hover{background:var(--soft)}
+.fmsg.apagada .fbal{color:var(--muted);font-style:italic}
+.fcomp{flex:none;border-top:var(--line);background:var(--card);padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px}
+.fhint{font-size:12.5px;color:var(--muted);margin:2px 0}
+.fresp{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);border-left:2px solid var(--ink);padding-left:8px}
+.fresp button{border:0;background:none;font-weight:700;cursor:pointer;color:inherit}
+.flinha{display:flex;gap:8px;align-items:flex-end}
+.flinha textarea{flex:1;min-width:0;resize:none;border:1.5px solid var(--ink);border-radius:12px;padding:10px 12px;font-size:14px;height:42px;background:var(--paper);outline:none;color:inherit;font:inherit}
+.fbt{border:1.5px solid var(--ink);background:var(--card);border-radius:999px;padding:8px 12px;font-size:12.5px;font-weight:700;height:42px;white-space:nowrap;color:inherit;cursor:pointer;box-shadow:none}
+.fbt.on,.fbt.env{background:var(--ink);color:var(--paper)}
+.fbt.env{padding:8px 16px}
+.fbt:disabled{opacity:.45;cursor:default}
+.fextra{display:flex;gap:8px}
+.finfo{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);font-weight:500}
+.fst{flex:1}
+.ferro{color:var(--red);font-weight:600}
+.fextra2{display:none;gap:6px}
+.fextra2 .fbt{height:30px;padding:4px 12px;font-size:12px}
+.fgifbox{display:flex;flex-direction:column;gap:6px}
+.fgifbusca{display:flex;gap:6px}
+.fgifbusca input{flex:1;min-width:0;border:1.5px solid var(--ink);border-radius:999px;padding:6px 12px;font-size:13px;background:var(--paper);color:inherit}
+.fgifbusca .fbt{height:34px;padding:4px 12px}
+.fgifs{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;max-height:170px;overflow:auto}
+.fgifopt{border:1.5px solid var(--ink);border-radius:8px;padding:0;overflow:hidden;height:70px;background:var(--soft);cursor:pointer}
+.fgifopt img{width:100%;height:100%;object-fit:cover;display:block}
+.fcred{font-size:10px;color:var(--muted);margin:0;text-align:right}
+ol.regras{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45}
+.silwrap{position:relative;display:inline-flex}
+.silmenu{position:absolute;bottom:calc(100% + 6px);left:0;z-index:5;display:flex;flex-direction:column;gap:4px;background:var(--card);border:var(--line);border-radius:12px;padding:6px;box-shadow:3px 3px 0 var(--ink);min-width:140px}
+.silmenu .mini{width:100%;text-align:left}
+/* celular: lista de salas e, ao tocar, a conversa ocupa a tela */
+@media (max-width:759px){
+  .forum{border:0;border-radius:0;margin:0 -18px -18px;background:var(--card)}
+  .fsalas{width:100%;border-right:0}
+  .mbody.fconversa{padding-top:0!important}
+  .fconvh{padding:0 14px}
+  .fmsgs{padding:14px}
+  .fextra{display:none}
+  .fextra2{display:flex}
+  .fgifs{grid-template-columns:repeat(3,1fr)}
+  .fmc{flex:1 1 calc(100% - 46px)}
+  .fmsg.aberta .facoes{position:static;margin-left:46px;width:max-content}
+  .facoes button{padding:3px 6px}
+}
+@media (max-width:520px){ .ctabs .chip{font-size:12px;padding:6px 4px} }

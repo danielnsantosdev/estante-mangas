@@ -9,7 +9,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch,
-  query, where, addDoc, updateDoc, deleteField,
+  query, where, addDoc, updateDoc, deleteField, orderBy, limit, serverTimestamp,
   terminate, clearIndexedDbPersistence,
 } from "firebase/firestore";
 import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
@@ -34,6 +34,7 @@ let netState = { pendingWrites: false, fromCache: true };
 let savedSort = "recent"; try { savedSort = localStorage.getItem("estante-sort") || "recent"; } catch (e) {}
 const ui = { filter: "todos", q: "", sort: savedSort, visit: null };   // visit = estante de outra pessoa aberta
 let myProfile = null;            // { apelido, publico }
+let myAvisos = [], forumDnd = false;   // menções/respostas no fórum (sino) e "Não perturbe"
 let myAvals = {};                // notas que visitantes deram nos MEUS mangás: { idMangá: { idVisitante: {nota, apelido, em} } }
 let extraUnsubs = [];
 $("#sort").value = ui.sort;
@@ -228,6 +229,10 @@ function startSync(uid) {
   extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avaliacoes"), (snap) => {
     const m = {}; snap.forEach(d => { m[d.id] = (d.data() || {}).notas || {}; }); myAvals = m; updateBell();
   }, () => {}));
+  extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avisos"), (snap) => {
+    myAvisos = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.em || 0) - (a.em || 0)); updateBell();
+  }, () => {}));
+  extraUnsubs.push(onSnapshot(doc(db, "users", uid, "config", "forum"), (d) => { forumDnd = !!(d.exists() && (d.data() || {}).dnd); updateBell(); }, () => {}));
   try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
   limparLixeira(uid);
   render();
@@ -1122,15 +1127,17 @@ function novasAvaliacoes() {
 }
 function updateBell() {
   if (!$("#bellBtn")) return;
-  const n = bellList().length + novasAvaliacoes().length;
+  const n = bellList().length + novasAvaliacoes().length + (forumDnd ? 0 : myAvisos.length);
   $("#bellBtn").classList.toggle("hidden", !n);
   $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
 }
 function openBell() {
-  const caps = bellList(), avs = novasAvaliacoes();
+  const caps = bellList(), avs = novasAvaliacoes(), fav = forumDnd ? [] : myAvisos.slice(0, 30);
   openModal(`
     <div class="mhead"><h2>🔔 Novidades</h2><button type="button" class="icon-btn" data-x>✕</button></div>
     <div class="mbody">
+      ${fav.length ? `<div class="secth">Fórum</div><div class="menu-list">${fav.map(a => `
+        <button class="acct pbtn" data-fsala="${esc(a.sala)}"><div><b>@${esc(a.apelido || "?")} ${a.tipo === "resposta" ? "respondeu você" : "mencionou você"} em ${esc(nomeSala(a.sala))}</b><small>${esc(a.trecho || "")}</small></div></button>`).join("")}</div>` : ""}
       ${avs.length ? `<div class="secth">Avaliações novas</div><div class="menu-list">${avs.map(({ it, v }) => `
         <button class="acct pbtn" data-info="${esc(it.id)}"><div><b>@${esc(v.apelido || "?")} deu ⭐ ${fmtNota(parseNota(v.nota))}</b><small>em ${esc(it.title)}</small></div></button>`).join("")}</div>` : ""}
       ${caps.length ? `<div class="secth">Capítulos novos</div><div class="menu-list">${caps.map(({ it, n }) => `
@@ -1138,11 +1145,14 @@ function openBell() {
           <div><b>${esc(it.title)}</b><small>+${n} ${n === 1 ? "capítulo novo" : "capítulos novos"} · você parou no ${fmtCap(it.chapter)}</small></div>
           ${fixLink(it.link) ? `<a class="mini read" data-seen="${esc(it.id)}" href="${esc(fixLink(it.link))}" target="_blank" rel="noopener noreferrer">Ler ↗</a>` : ""}
         </div>`).join("")}</div>` : ""}
-      ${!avs.length && !caps.length ? `<p class="hint">Nenhuma novidade por enquanto.</p>` : ""}
+      ${!avs.length && !caps.length && !fav.length ? `<p class="hint">Nenhuma novidade por enquanto.</p>` : ""}
     </div>`, (root) => {
     try { localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-info]").forEach(b => b.onclick = () => openInfo(b.dataset.info));
+    root.querySelectorAll("[data-fsala]").forEach(b => b.onclick = () => { forumEstado.sala = b.dataset.fsala; openPeople("forum"); });
+    // avisos do fórum vistos: saem do sino
+    if (fav.length) { const bt = writeBatch(db); fav.forEach(a => bt.delete(doc(db, "users", currentUser.uid, "avisos", a.id))); bt.commit().catch(() => {}); }
     root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => { markSeen(a.dataset.seen); setTimeout(() => { if (!bellList().length) closeModal(); else openBell(); }, 350); }));
     return () => updateBell();
   });
@@ -1472,7 +1482,7 @@ const nomeMes = (m) => { const [a, b] = String(m || "").split("-").map(Number); 
 function openPeople(tab = "perfil") {
   const p = myProfile || {};
   const offline = !navigator.onLine;
-  const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Comunidade"], ["ranking", "Ranking"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
+  const tabs = `<div class="ctabs">${[["perfil", "Meu perfil"], ["pessoas", "Comunidade"], ["ranking", "Ranking"], ["forum", "Fórum"]].map(([k, l]) => `<button type="button" class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
   let corpo = "";
   if (tab === "perfil") corpo = `
       ${p.apelido ? `<div class="vitrine mine">${vitrineHTML(p, soVisiveis(), false)}</div>
@@ -1496,14 +1506,16 @@ function openPeople(tab = "perfil") {
         <div class="search" style="height:42px">🔍<input id="pq" type="search" placeholder="Buscar apelido…" autocomplete="off"></div>
         <div id="plist" class="menu-list"><div class="hint">Carregando…</div></div>
       </div>`;
+  else if (tab === "forum") corpo = offline ? `<p class="hint">📴 Sem internet: o fórum precisa de conexão.</p>` : `<div id="forum" class="forum"><div class="hint" style="padding:16px">Carregando o fórum…</div></div>`;
   else corpo = offline ? `<p class="hint">📴 Sem internet: o ranking precisa de conexão.</p>` : `<div id="rk"><div class="hint">Carregando ranking…</div></div>`;
   openModal(`
     <div class="mhead"><h2>👥 Social</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody">${tabs}${corpo}</div>`, (root) => {
+    <div class="mbody ${tab === "forum" ? "mbforum" : ""}">${tabs}${corpo}</div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => openPeople(b.dataset.tab));
     if (tab === "pessoas" && !offline) montarPessoas(root);
     if (tab === "ranking" && !offline) montarRanking(root);
+    if (tab === "forum") return offline ? undefined : montarForum(root);
     if (tab !== "perfil") return;
     const vtm = root.querySelector(".vitrine.mine");
     if (vtm) ligarVitrine(vtm, soVisiveis(), true);
@@ -1866,6 +1878,230 @@ async function adicionarObraPV(x, btn) {
   const s = document.createElement("span"); s.className = "mini rktem"; s.textContent = "✓ Na fila"; btn.replaceWith(s);
 }
 
+
+// ---------- Fórum: 3 salas, mensagens somem em 7 dias ----------
+const FORUM_SALAS = [{ k: "geral", n: "Geral", d: "Conversa livre sobre mangás" }, { k: "rec", n: "Recomendações", d: "Peça e dê dicas de leitura" }, { k: "spo", n: "Spoilers", d: "Tudo aqui fica coberto até tocar" }];
+const nomeSala = (k) => (FORUM_SALAS.find(x => x.k === k) || {}).n || k;
+const forumEstado = { sala: null };
+const forumPC = () => matchMedia("(min-width:760px)").matches;
+// Moderação: palavrões leves passam; pesados ganham asteriscos; ofensas a pessoas não são enviadas
+const L = "[\\p{L}\\p{N}]";
+const palavra = (src) => new RegExp(`(?<!${L})(?:${src})(?!${L})`, "giu");
+const MOD_ASTER = palavra("filh[oa]s? da puta|put[oa]s?|fod[ea]r|fuder|fdp|arrombad[oa]s?|cuz[aã]o|cuz[oõ]es|vsf|vtnc|desgra[cç]ad[oa]s?");
+const MOD_BLOQ = [
+  [palavra("(?:seu|sua|teu|tua|esse|essa|seus|suas|vai|cara de) macac[oa]s?|crioul[oa]s?|nig+[ae]r|nig+a|negr[oa] imund[oa]|volta pr[ao] senzala"), "ofensa racista"],
+  [palavra("viad[oa]s?|bichas?|bichinha|traveco|sapat[aã]o|boiola|baitola|faggot"), "ofensa homofóbica"],
+  [palavra("retardad[oa]s?|mongol|mongoloide|aleijad[oa]"), "ofensa capacitista"],
+  [palavra("vou te matar|te mato|vou matar voc[eê]|vai morrer|se mata|vai se matar|te pego na sa[ií]da"), "ameaça"],
+  [palavra("manda nudes?|manda foto pelad[oa]|nudes"), "assédio"],
+  [palavra("nazis\\p{L}*|hitler|heil|pedofil\\p{L}*|estupr\\p{L}*"), "conteúdo proibido"],
+];
+function moderar(txt) {
+  for (const [re, mot] of MOD_BLOQ) { re.lastIndex = 0; if (re.test(txt)) return { erro: `Mensagem não enviada: ${mot}. As regras da comunidade não permitem.` }; }
+  let mudou = false;
+  const out = txt.replace(MOD_ASTER, (m) => { mudou = true; return m.replace(/(\S)(\S*)/g, (_, a, b) => a + "*".repeat(b.length)); });
+  return { texto: out, mudou };
+}
+const RE_MENCAO = /@([A-Za-z0-9áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ]{3,20})/g;
+const corDe = (uid) => ["#2563eb", "#be185d", "#b91c1c", "#15803d", "#6d28d9", "#0e7490", "#c2410c", "#475569", "#7e22ce", "#0f766e"][[...String(uid || "")].reduce((a, c) => a + c.charCodeAt(0), 0) % 10];
+const fotoCache = {};
+const vistoKey = () => "estante-forum-visto-" + (currentUser ? currentUser.uid : "");
+function vistoLer() { try { return JSON.parse(localStorage.getItem(vistoKey()) || "{}"); } catch (e) { return {}; } }
+function vistoMarcar(sala) { const v = vistoLer(); v[sala] = Date.now(); try { localStorage.setItem(vistoKey(), JSON.stringify(v)); } catch (e) {} }
+const horaDe = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const diaDe = (ms) => { const d = new Date(ms), h = new Date(); const z = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); const dif = Math.round((z(h) - z(d)) / 864e5); return dif === 0 ? "Hoje" : dif === 1 ? "Ontem" : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const REGRAS_HTML = `<ol class="regras">
+  <li><b>Respeito acima de tudo.</b> Nada de ofender, ameaçar ou humilhar ninguém, por nenhum motivo.</li>
+  <li><b>Spoiler só coberto.</b> Use o botão Spoiler, ou escreva na sala Spoilers.</li>
+  <li><b>Nada de conteúdo adulto</b>, nem links ou GIFs impróprios.</li>
+  <li><b>Sem spam ou propaganda.</b> Uma mensagem a cada 5 segundos.</li>
+  <li><b>Palavrão leve passa</b>; os pesados aparecem com asteriscos; ofensas a pessoas não são enviadas.</li>
+  <li><b>As mensagens somem em 7 dias.</b> Viu algo errado? Toque na mensagem e em Denunciar.</li>
+  <li>Quem descumprir pode ser silenciado (5 minutos, 1 hora, 24 horas ou 7 dias).</li></ol>`;
+function abrirRegras() {
+  abrirFolha(`<div class="mhead"><h2 class="fh">Regras da comunidade</h2><button type="button" class="icon-btn" data-fx>✕</button></div><div class="mbody">${REGRAS_HTML}</div>`);
+}
+function montarForum(root) {
+  const box = root.querySelector("#forum"), me = currentUser.uid;
+  const msgs = { geral: [], rec: [], spo: [] }, unsubs = [];
+  let silAte = 0, espera = 0, esperaT = null, resp = null, spoiler = false, gifAberto = false, rascunho = "";
+  if (!forumEstado.sala && forumPC()) forumEstado.sala = "geral";
+  const naoLidas = (k) => { const v = vistoLer()[k] || 0; return msgs[k].filter(m => (m.criadoEm || 0) > v && m.uid !== me).length; };
+  const salasHTML = () => `<div class="fsalas"><div class="fsalash">Salas</div>${FORUM_SALAS.map(x => {
+      const u = msgs[x.k][msgs[x.k].length - 1], n = forumEstado.sala === x.k ? 0 : naoLidas(x.k);
+      return `<button type="button" class="fsala ${forumEstado.sala === x.k ? "on" : ""}" data-sala="${x.k}"><b>${x.n}${n ? `<span class="fnlid">${n > 99 ? "99+" : n}</span>` : ""}</b><small>${x.d}</small>${!forumPC() && u ? `<span class="fult">@${esc(u.apelido)}: ${u.apagada ? "mensagem apagada" : u.spoiler ? "Spoiler" : u.gif && !u.texto ? "GIF" : esc(u.texto)}</span>` : ""}</button>`; }).join("")}
+    <div class="fsalasfoot"><label class="fsw"><input type="checkbox" id="fDnd" ${forumDnd ? "checked" : ""}><span class="fsl"></span><span>Não perturbe<small>Sem avisos do fórum no sino</small></span></label><button type="button" class="fregras" id="fRegras">Regras da comunidade</button></div></div>`;
+  const msgHTML = (m) => {
+    if (m.apagada) return `<div class="fmsg apagada"><span class="fav" style="background:#bbb"></span><div class="fmc"><div class="fbal">Mensagem apagada pelo administrador.</div></div></div>`;
+    const ap = myProfile && myProfile.apelido ? myProfile.apelido.toLowerCase() : "";
+    const praMim = (ap && (m.texto || "").toLowerCase().includes("@" + ap)) || (m.resp && m.resp.uid === me);
+    const txt = esc(m.texto || "").replace(RE_MENCAO, '<span class="fmen">@$1</span>');
+    return `<div class="fmsg ${praMim ? "pramim" : ""}" data-id="${esc(m.id)}"><span class="fav" data-fav="${esc(m.uid)}" style="background:${corDe(m.uid)}">${fotoCache[m.uid] ? `<img src="${esc(fotoCache[m.uid])}" alt="">` : esc((m.apelido || "?").slice(0, 1).toUpperCase())}</span><div class="fmc">
+      <div class="fmt"><b>@${esc(m.apelido)}</b><time>${horaDe(m.criadoEm)}</time></div>
+      ${m.resp ? `<div class="fcit">Respondendo @${esc(m.resp.apelido)}: ${esc(m.resp.trecho || "")}</div>` : ""}
+      ${m.texto ? `<div class="fbal">${m.spoiler ? `<span class="fspo">${txt}</span>` : txt}</div>` : ""}
+      ${m.gif ? `<div class="fbal">${m.spoiler && !m.texto ? `<span class="fspo"><img class="fgif" src="${esc(m.gif)}" alt="GIF" loading="lazy" referrerpolicy="no-referrer"></span>` : `<img class="fgif" src="${esc(m.gif)}" alt="GIF" loading="lazy" referrerpolicy="no-referrer">`}</div>` : ""}
+      </div><div class="facoes"><button type="button" data-a="resp">Responder</button>${m.uid !== me ? `<button type="button" data-a="den">Denunciar</button>` : ""}</div></div>`;
+  };
+  const listaHTML = () => {
+    const l = msgs[forumEstado.sala]; let dia = "", out = "";
+    for (const m of l) { const d = diaDe(m.criadoEm); if (d !== dia) { dia = d; out += `<div class="fdia">${d}</div>`; } out += msgHTML(m); }
+    return out || `<p class="fvazio">Nenhuma mensagem ainda. Comece a conversa!</p>`;
+  };
+  const podeEscrever = () => !!(myProfile && myProfile.apelido);
+  const compHTML = () => {
+    if (!podeEscrever()) return `<div class="fcomp"><p class="fhint">Para escrever no fórum, crie seu apelido em Meu perfil.</p></div>`;
+    if (silAte > Date.now()) return `<div class="fcomp"><p class="fhint">Você está silenciado no fórum até ${diaDe(silAte) === "Hoje" ? "" : diaDe(silAte) + " às "}${horaDe(silAte)}.</p></div>`;
+    const temGif = temBuscaGif(), spo = forumEstado.sala === "spo";
+    return `<div class="fcomp">
+      ${resp ? `<div class="fresp"><span>Respondendo @${esc(resp.apelido)}</span><button type="button" data-c="cancresp">✕</button></div>` : ""}
+      ${gifAberto ? `<div class="fgifbox"><div class="fgifbusca"><input id="fGifQ" placeholder="Buscar GIF (ex.: one piece)" autocomplete="off"><button type="button" class="fbt" data-c="gifbusca">Buscar</button><button type="button" class="fbt" data-c="gif">Fechar</button></div><div class="fgifs" id="fGifs"><p class="fhint">Busque um GIF para enviar.</p></div><p class="fcred">GIFs: Powered by GIPHY · KLIPY</p></div>` : ""}
+      <div class="flinha"><textarea id="fTxt" maxlength="500" rows="1" placeholder="${forumPC() ? "Escreva uma mensagem…  (@ para mencionar)" : "Escreva uma mensagem…"}">${esc(rascunho)}</textarea>
+        <span class="fextra">${temGif ? `<button type="button" class="fbt ${gifAberto ? "on" : ""}" data-c="gif">GIF</button>` : ""}${spo ? "" : `<button type="button" class="fbt ${spoiler ? "on" : ""}" data-c="spo">Spoiler</button>`}</span>
+        <button type="button" class="fbt env" data-c="env" ${espera ? "disabled" : ""}>${espera ? `Aguarde ${espera}s` : "Enviar"}</button></div>
+      <div class="finfo"><span class="fst"></span><span class="fextra2">${temGif ? `<button type="button" class="fbt ${gifAberto ? "on" : ""}" data-c="gif">GIF</button>` : ""}${spo ? "" : `<button type="button" class="fbt ${spoiler ? "on" : ""}" data-c="spo">Spoiler</button>`}</span><span class="fcnt">${rascunho.length}/500</span></div></div>`;
+  };
+  const convHTML = () => `<div class="fconv"><div class="fconvh">${forumPC() ? "" : `<button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>`}<b>${esc(nomeSala(forumEstado.sala))}</b><small>Mensagens somem 7 dias depois</small></div>
+    <div class="fmsgs">${listaHTML()}</div>${compHTML()}</div>`;
+  const pintaLista = () => {
+    const ms = box.querySelector(".fmsgs"); if (!ms) return;
+    const noFim = ms.scrollHeight - ms.scrollTop - ms.clientHeight < 80;
+    ms.innerHTML = listaHTML(); carregaFotos(ms);
+    grudaNoFim(ms, noFim);
+  };
+  const desenha = () => {
+    const tabs = root.querySelector(".ctabs"), conversa = !!forumEstado.sala;
+    root.querySelector(".mbody").classList.toggle("fconversa", conversa && !forumPC());
+    if (tabs) tabs.style.display = conversa && !forumPC() ? "none" : "";
+    box.innerHTML = forumPC() ? salasHTML() + (conversa ? convHTML() : "") : (conversa ? convHTML() : salasHTML());
+    const ms = box.querySelector(".fmsgs"); if (ms) { carregaFotos(ms); grudaNoFim(ms, true); }
+    const ta = box.querySelector("#fTxt");
+    if (ta) {
+      ta.addEventListener("input", () => { rascunho = ta.value; box.querySelectorAll(".fcnt").forEach(c => c.textContent = ta.value.length + "/500"); const st = box.querySelector(".fst"); if (st) { st.textContent = ""; st.className = "fst"; } });
+      ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && forumPC()) { e.preventDefault(); enviar(); } });
+    }
+    const gq = box.querySelector("#fGifQ"); if (gq) gq.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscarGif(); } });
+    const dnd = box.querySelector("#fDnd"); if (dnd) dnd.onchange = () => { setDoc(doc(db, "users", me, "config", "forum"), { dnd: dnd.checked }).catch(() => {}); forumDnd = dnd.checked; updateBell(); toast(dnd.checked ? "Não perturbe ligado: o fórum não avisa no sino." : "Avisos do fórum ligados."); };
+    const rg = box.querySelector("#fRegras"); if (rg) rg.onclick = abrirRegras;
+    if (forumEstado.sala) vistoMarcar(forumEstado.sala);
+  };
+  // fica no fim da conversa, inclusive quando os GIFs terminam de carregar
+  function grudaNoFim(ms, agora) {
+    let grudado = agora;
+    if (agora) ms.scrollTop = ms.scrollHeight;
+    ms.onscroll = () => { grudado = ms.scrollHeight - ms.scrollTop - ms.clientHeight < 80; };
+    ms.querySelectorAll("img").forEach(i => i.addEventListener("load", () => { if (grudado) ms.scrollTop = ms.scrollHeight; }, { once: true }));
+  }
+  function carregaFotos(el) {
+    el.querySelectorAll("[data-fav]").forEach(a => {
+      const uid = a.dataset.fav; if (fotoCache[uid] !== undefined) return;
+      fotoCache[uid] = "";
+      getDoc(doc(db, "perfis", uid)).then(d => { const f = d.exists() ? safeFoto((d.data() || {}).foto) : ""; fotoCache[uid] = f; if (f) box.querySelectorAll(`[data-fav="${uid}"]`).forEach(x => { x.innerHTML = `<img src="${esc(f)}" alt="">`; }); }).catch(() => {});
+    });
+  }
+  const msgDe = (id) => (msgs[forumEstado.sala] || []).find(m => m.id === id);
+  async function buscarGif() {
+    const q = box.querySelector("#fGifQ"), res = box.querySelector("#fGifs"); if (!q || !res) return;
+    const t = q.value.trim(); if (!t) { q.focus(); return; }
+    res.innerHTML = `<p class="fhint">Buscando…</p>`;
+    try {
+      const l = (await buscaGifs(t)).slice(0, 24);
+      res.innerHTML = l.length ? l.map(g => `<button type="button" class="fgifopt" data-gifu="${esc(g.thumb || g.url)}"><img src="${esc(g.thumb || g.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join("") : `<p class="fhint">Nenhum GIF encontrado.</p>`;
+    } catch (e) { res.innerHTML = `<p class="fhint">Não consegui buscar agora.</p>`; }
+  }
+  const comeca5s = () => {
+    espera = 5; clearInterval(esperaT);
+    esperaT = setInterval(() => { espera--; const b = box.querySelector('[data-c="env"]'); if (b) { b.disabled = espera > 0; b.textContent = espera > 0 ? `Aguarde ${espera}s` : "Enviar"; } if (espera <= 0) clearInterval(esperaT); }, 1000);
+  };
+  async function enviar(gif) {
+    if (espera || !podeEscrever()) return;
+    const ta = box.querySelector("#fTxt"), st = box.querySelector(".fst");
+    const bruto = (ta ? ta.value : "").trim().slice(0, 500);
+    if (!bruto && !gif) return;
+    const r = bruto ? moderar(bruto) : { texto: "", mudou: false };
+    if (r.erro) { if (st) { st.className = "fst ferro"; st.textContent = r.erro; } return; }
+    const sala = forumEstado.sala;
+    const m = { uid: me, apelido: myProfile.apelido, texto: r.texto, spoiler: sala === "spo" || spoiler, criadoEm: Date.now(), ts: serverTimestamp() };
+    if (gif) m.gif = String(gif).slice(0, 600);
+    if (resp) m.resp = { uid: resp.uid, apelido: String(resp.apelido || "").slice(0, 30), trecho: String(resp.trecho || "").slice(0, 120) };
+    const b = writeBatch(db);
+    b.set(doc(collection(db, "forum", sala, "msgs")), m);
+    b.set(doc(db, "forumUsers", me), { ultima: serverTimestamp() }, { merge: true });
+    comeca5s();
+    const alvoResp = resp; rascunho = ""; resp = null; spoiler = false; gifAberto = false; desenha();
+    try { await b.commit(); }
+    catch (e) {
+      toast(e && e.code === "permission-denied" ? "Não foi possível enviar. Espere alguns segundos (ou você pode estar silenciado)." : "Não foi possível enviar. Verifique a internet.", 4500);
+      rascunho = bruto; desenha(); return;
+    }
+    if (r.mudou) toast("Algumas palavras foram suavizadas com asteriscos.", 3200);
+    // avisa no sino quem foi mencionado ou respondido
+    const trecho = (r.texto || (gif ? "GIF" : "")).slice(0, 120), avisados = new Set([me]);
+    const avisa = (uid, tipo) => { if (!uid || avisados.has(uid)) return; avisados.add(uid); addDoc(collection(db, "users", uid, "avisos"), { tipo, de: me, apelido: myProfile.apelido, sala, trecho: m.spoiler ? "Spoiler" : trecho, em: Date.now() }).catch(() => {}); };
+    if (alvoResp) avisa(alvoResp.uid, "resposta");
+    for (const [, ap] of (r.texto || "").matchAll(RE_MENCAO)) {
+      try { const d = await getDoc(doc(db, "apelidos", ap.toLowerCase())); if (d.exists()) avisa((d.data() || {}).uid, "mencao"); } catch (e) {}
+    }
+  }
+  box.addEventListener("click", (e) => {
+    const sp = e.target.closest(".fspo"); if (sp && !sp.classList.contains("ver")) { sp.classList.add("ver"); return; }
+    const s = e.target.closest("[data-sala]"); if (s) { forumEstado.sala = s.dataset.sala; resp = null; rascunho = ""; gifAberto = false; desenha(); return; }
+    const a = e.target.closest("[data-a]");
+    if (a) {
+      const m = msgDe(a.closest("[data-id]").dataset.id); if (!m) return;
+      if (a.dataset.a === "resp") { resp = { uid: m.uid, apelido: m.apelido, trecho: m.spoiler ? "Spoiler" : (m.texto || "GIF") }; desenha(); const ta = box.querySelector("#fTxt"); if (ta) ta.focus(); }
+      if (a.dataset.a === "den") abrirDenunciaForum(m, forumEstado.sala);
+      return;
+    }
+    const g = e.target.closest("[data-gifu]"); if (g) { enviar(g.dataset.gifu); return; }
+    const c = e.target.closest("[data-c]");
+    if (c) {
+      const k = c.dataset.c;
+      if (k === "voltar") { forumEstado.sala = null; desenha(); }
+      else if (k === "cancresp") { resp = null; desenha(); }
+      else if (k === "spo") { spoiler = !spoiler; box.querySelectorAll('[data-c="spo"]').forEach(x => x.classList.toggle("on", spoiler)); }
+      else if (k === "gif") { gifAberto = !gifAberto; desenha(); const q = box.querySelector("#fGifQ"); if (q) q.focus(); }
+      else if (k === "gifbusca") buscarGif();
+      else if (k === "env") enviar();
+      return;
+    }
+    const msg = e.target.closest(".fmsg[data-id]");
+    if (msg) { box.querySelectorAll(".fmsg.aberta").forEach(x => x !== msg && x.classList.remove("aberta")); msg.classList.toggle("aberta"); }
+  });
+  // mensagens em tempo real (as 100 mais novas de cada sala, só dos últimos 7 dias)
+  for (const x of FORUM_SALAS) {
+    unsubs.push(onSnapshot(query(collection(db, "forum", x.k, "msgs"), orderBy("criadoEm", "desc"), limit(100)), (snap) => {
+      const limite = Date.now() - 7 * 864e5;
+      msgs[x.k] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => (m.criadoEm || 0) > limite).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
+      if (!box.isConnected) return;
+      if (forumEstado.sala === x.k) { pintaLista(); vistoMarcar(x.k); }
+      if (!forumEstado.sala || forumPC()) { const ss = box.querySelector(".fsalas"); if (ss) { const novo = document.createElement("div"); novo.innerHTML = salasHTML(); ss.replaceWith(novo.firstElementChild); const dnd = box.querySelector("#fDnd"); if (dnd) dnd.onchange = () => { setDoc(doc(db, "users", me, "config", "forum"), { dnd: dnd.checked }).catch(() => {}); forumDnd = dnd.checked; updateBell(); }; const rg = box.querySelector("#fRegras"); if (rg) rg.onclick = abrirRegras; } }
+    }, () => { if (box.isConnected && forumEstado.sala === x.k) { const ms = box.querySelector(".fmsgs"); if (ms) ms.innerHTML = `<p class="fvazio">Não consegui carregar as mensagens agora.</p>`; } }));
+  }
+  getDoc(doc(db, "forumUsers", me)).then(d => { const t = d.exists() && (d.data() || {}).silenciadoAte; silAte = t && t.toMillis ? t.toMillis() : 0; if (silAte > Date.now() && box.isConnected) desenha(); }).catch(() => {});
+  const aoMudarTela = () => { if (box.isConnected) desenha(); };
+  const mq = matchMedia("(min-width:760px)"); mq.addEventListener("change", aoMudarTela);
+  desenha();
+  return () => { unsubs.forEach(u => u()); clearInterval(esperaT); mq.removeEventListener("change", aoMudarTela); fecharFolha(); };
+}
+const MOTIVOS_FORUM = { ofensa: "Ofensa ou desrespeito", spoiler: "Spoiler sem aviso", improprio: "Conteúdo impróprio", spam: "Spam ou propaganda", outro: "Outro motivo" };
+function abrirDenunciaForum(m, sala) {
+  abrirFolha(`<form id="fdenF"><div class="mhead"><h2 class="fh">Denunciar mensagem</h2><button type="button" class="icon-btn" data-fx>✕</button></div>
+    <div class="mbody"><p class="hint" style="margin-top:0">Mensagem de <b>@${esc(m.apelido)}</b> em ${esc(nomeSala(sala))}. A pessoa não fica sabendo quem denunciou.</p>
+      <div class="menu-list">${Object.entries(MOTIVOS_FORUM).map(([k, v], i) => `<label class="chk"><input type="radio" name="m" value="${k}" ${i ? "" : "checked"}> <span>${v}</span></label>`).join("")}</div>
+      <label class="f">Detalhes (opcional)<textarea name="t" maxlength="300" rows="2"></textarea></label>
+      <div class="mfoot" style="padding:0;border:0"><span class="grow"></span><button type="button" class="btn ghost" data-fx>Cancelar</button><button type="submit" class="btn primary">Enviar denúncia</button></div></div></form>`, (f) => {
+    f.querySelector("#fdenF").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const me = currentUser.uid, sb = e.target.querySelector("[type=submit]"); sb.disabled = true;
+      const den = { de: me, apelidoDe: String((myProfile && myProfile.apelido) || "").slice(0, 30), alvo: m.uid, alvoApelido: String(m.apelido || "").slice(0, 30),
+        mangaId: `f-${sala}-${m.id}`.slice(0, 100), titulo: ("Fórum · " + nomeSala(sala)).slice(0, 120), motivo: e.target.m.value, texto: e.target.t.value.trim().slice(0, 300),
+        criadoEm: Date.now(), resolvido: false, tipo: "forum", sala, msgId: String(m.id).slice(0, 40), trecho: String(m.texto || (m.gif ? "[GIF] " + m.gif : "")).slice(0, 300) };
+      try { await setDoc(doc(db, "denuncias", `${me}_${m.uid}_${den.mangaId}`), den); fecharFolha(); toast("Denúncia enviada. Obrigado por ajudar a manter a comunidade legal!", 4000); }
+      catch (x) { sb.disabled = false; toast(x.code === "permission-denied" ? "Você já denunciou esta mensagem." : "Não foi possível enviar agora.", 4000); }
+    });
+  });
+}
 
 // ---------- vitrine do perfil ----------
 const soVisiveis = () => new Map([...items].filter(([, it]) => !it.privado));
@@ -2423,7 +2659,13 @@ function openDenuncias() {
       lista = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.resolvido - b.resolvido) || (b.criadoEm || 0) - (a.criadoEm || 0));
       // quantas pessoas denunciaram o mesmo mangá
       const conta = {}; lista.forEach(r => { const k = r.alvo + "/" + r.mangaId; conta[k] = (conta[k] || 0) + (r.resolvido ? 0 : 1); });
-      dl.innerHTML = lista.length ? lista.map(r => `
+      dl.innerHTML = lista.length ? lista.map(r => r.tipo === "forum" ? `
+        <div class="report ${r.resolvido ? "done" : ""}" data-id="${esc(r.id)}">
+          <div class="rmeta">${r.resolvido ? "✅" : "🚩"} <b>Fórum · ${esc(nomeSala(r.sala))}</b> · mensagem de <b>@${esc(r.alvoApelido || "?")}</b>${!r.resolvido && conta[r.alvo + "/" + r.mangaId] > 1 ? ` · <b style="color:var(--red)">${conta[r.alvo + "/" + r.mangaId]} denúncias</b>` : ""}</div>
+          <div class="rmeta">${esc(MOTIVOS_FORUM[r.motivo] || MOTIVOS_DEN[r.motivo] || r.motivo)} · por @${esc(r.apelidoDe || "?")} · ${new Date(r.criadoEm || 0).toLocaleString("pt-BR")}</div>
+          ${r.trecho ? `<div class="rtext">“${esc(r.trecho)}”</div>` : ""}${r.texto ? `<div class="rtext">${esc(r.texto)}</div>` : ""}
+          <div class="ract"><button class="mini" data-r="apmsg">Apagar mensagem</button><span class="silwrap"><button class="mini" data-r="sil">Silenciar ▾</button></span>${r.resolvido ? "" : `<button class="mini" data-r="ok">✓ Resolvido</button>`}<button class="mini" data-r="del" style="color:var(--red)">Apagar</button></div>
+        </div>` : `
         <div class="report ${r.resolvido ? "done" : ""}" data-id="${esc(r.id)}">
           <div class="rmeta">${r.resolvido ? "✅" : "🚩"} <b>${esc(r.titulo)}</b> · estante de <b>@${esc(r.alvoApelido || "?")}</b>${!r.resolvido && conta[r.alvo + "/" + r.mangaId] > 1 ? ` · <b style="color:var(--red)">${conta[r.alvo + "/" + r.mangaId]} denúncias</b>` : ""}</div>
           <div class="rmeta">${esc(MOTIVOS_DEN[r.motivo] || r.motivo)} · por @${esc(r.apelidoDe || "?")} · ${new Date(r.criadoEm || 0).toLocaleString("pt-BR")}</div>
@@ -2436,6 +2678,24 @@ function openDenuncias() {
       const id = b.closest("[data-id]").dataset.id, r = lista.find(x => x.id === id); if (!r) return;
       try {
         if (b.dataset.r === "ver") { openVisit(r.alvo, r.alvoApelido, ""); return; }
+        if (b.dataset.r === "apmsg") {
+          if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar mesmo?"; return; }
+          await updateDoc(doc(db, "forum", r.sala, "msgs", r.msgId), { apagada: true, texto: "", gif: deleteField() });
+          await updateDoc(doc(db, "denuncias", id), { resolvido: true }).catch(() => {});
+          toast("Mensagem apagada."); return;
+        }
+        if (b.dataset.r === "sil") {
+          const w = b.closest(".silwrap"); const aberto = w.querySelector(".silmenu");
+          dl.querySelectorAll(".silmenu").forEach(x => x.remove()); if (aberto) return;
+          w.insertAdjacentHTML("beforeend", `<div class="silmenu">${[["5 minutos", 5], ["1 hora", 60], ["24 horas", 1440], ["7 dias", 10080]].map(([l, m]) => `<button class="mini" data-r="silt" data-min="${m}">${l}</button>`).join("")}<button class="mini" data-r="silt" data-min="0">Tirar silêncio</button></div>`);
+          return;
+        }
+        if (b.dataset.r === "silt") {
+          const min = Number(b.dataset.min);
+          await setDoc(doc(db, "forumUsers", r.alvo), { silenciadoAte: min ? new Date(Date.now() + min * 60e3) : deleteField() }, { merge: true });
+          dl.querySelectorAll(".silmenu").forEach(x => x.remove());
+          toast(min ? `@${r.alvoApelido} silenciado por ${b.textContent}.` : `@${r.alvoApelido} pode escrever de novo.`, 3500); return;
+        }
         if (b.dataset.r === "ok") await updateDoc(doc(db, "denuncias", id), { resolvido: true });
         else { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar?"; return; } await deleteDoc(doc(db, "denuncias", id)); }
       } catch (x) { toast("Não foi possível alterar."); }

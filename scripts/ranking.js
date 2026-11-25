@@ -128,6 +128,7 @@ const idHist = (uid, chave) => `${uid}__${chave}`.replace(/\//g, "_").slice(0, 3
 const ehCat = (k) => /^(al|mal)\d+$/.test(k || "");
 
 (async () => {
+  try { await require("./limpeza.js")(db); } catch (e) { console.log("Limpeza do fórum falhou: " + e.message); }
   const br = agoraBR();
   const tudo = process.env.MODO === "tudo" || br.getUTCDate() === 1;
   const inicioDiaBR = Date.UTC(br.getUTCFullYear(), br.getUTCMonth(), br.getUTCDate()) + 3 * 3600e3;
