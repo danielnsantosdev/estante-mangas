@@ -1567,7 +1567,8 @@ function montarPessoas(root) {
 }
 // ---------- Ranking: Todos os tempos · Em alta · Esta semana · Este mês · Por gênero · Para você ----------
 const RK_FILTROS = [["todos", "Todos os tempos"], ["alta", "Em alta"], ["semana", "Esta semana"], ["mes", "Este mês"], ["genero", "Por gênero"], ["pv", "✨ Para você"]];
-const rkEstado = { f: "todos", barra: 0 };   // continua onde você parou ao voltar para o Ranking
+const rkEstado = { f: "todos", barra: 0, g: "Ação", gbarra: 0 };
+const RK_GENEROS = ["Ação", "Romance", "Fantasia", "Comédia", "Drama", "Esportes", "Mistério", "Terror"];   // continua onde você parou ao voltar para o Ranking
 const rkPC = () => matchMedia("(min-width:1100px)").matches;
 const chaveQuem = (k) => String(k || "").replace(/[.\/\[\]*`~]/g, "_");
 const naEstante = (x) => [...items.values()].some(it => (x.catId && it.catId === x.catId) || norm(it.title) === norm(x.titulo));
@@ -1604,19 +1605,18 @@ async function montarRanking(root) {
   const carregar = async () => {
     if (dados) return dados;
     const ler = (id) => getDoc(doc(db, "ranking", id)).then(d => d.exists() ? d.data() : null).catch(() => null);
-    const [todos, periodos, quem, atual] = await Promise.all([ler("todos"), ler("periodos"), ler("quem"), ler("atual")]);
+    const [todos, periodos, quem, atual, generos] = await Promise.all([ler("todos"), ler("periodos"), ler("quem"), ler("atual"), ler("generos")]);
     // antes do primeiro cálculo novo, usa o ranking antigo
     const t = todos || (atual ? { maisLidos: atual.maisLidos || [], melhores: atual.melhores || [], leitores: (atual.leitores || []).map(l => ({ ...l, concluidos: l.lidos })) } : null);
-    return (dados = { todos: t, periodos, quem: (quem && quem.mapa) || {} });
+    return (dados = { todos: t, periodos, quem: (quem && quem.mapa) || {}, generos: (generos && generos.lista) || {} });
   };
   const mostra = async () => {
     barra.querySelectorAll("[data-f]").forEach(b => b.classList.toggle("on", b.dataset.f === rkEstado.f));
     const f = rkEstado.f;
     if (f === "pv") { montarParaVoce(area, await carregar().catch(() => ({}))); return; }
-    if (f === "genero") { area.innerHTML = `<p class="rkcap">Por gênero chega em breve.</p>`; return; }
     let d; try { d = await carregar(); } catch (e) { area.innerHTML = `<div class="err">Não consegui carregar o ranking agora.</div>`; return; }
     if (rkEstado.f !== f || !area.isConnected) return;
-    if (f === "todos") desenharTodos(area, d); else desenharPeriodo(area, d, f);
+    if (f === "todos") desenharTodos(area, d); else if (f === "genero") desenharGenero(area, d); else desenharPeriodo(area, d, f);
     rkCarregaCapas(area);
   };
   barra.addEventListener("click", (e) => {
@@ -1652,7 +1652,7 @@ function desenharTodos(area, d) {
   area.innerHTML = `<p class="rkcap">Soma de todas as leituras desde o início · atualiza todo dia 1º</p>
     <div class="rkcols">
       <div class="rktab"><div class="rkth">Os mais lidos da história</div>${(t.maisLidos || []).length ? t.maisLidos.map((x, i) => linhaObra(x, i, `<b>${x.leitores}</b> ${x.leitores === 1 ? "leitor" : "leitores"}`)).join("") : vazio}</div>
-      <div class="rktab"><div class="rkth">Mais bem avaliados</div>${(t.melhores || []).length ? t.melhores.map((x, i) => linhaObra(x, i, `<b>⭐ ${fmtNota(x.media)}</b> · ${x.notas} notas`)).join("") : vazio}</div>
+      <div class="rktab"><div class="rkth">Os mais bem avaliados</div>${(t.melhores || []).length ? t.melhores.map((x, i) => linhaObra(x, i, `<b>⭐ ${fmtNota(x.media)}</b> · ${x.notas} notas`)).join("") : vazio}</div>
       <div class="rktab"><div class="rkth">Maiores leitores</div>${(t.leitores || []).length ? t.leitores.slice(0, nLeit).map((l, i) => `<button type="button" class="rkl l" data-uid="${esc(l.uid)}" data-ap="${esc(l.apelido)}">${rkPos(i)}<span class="rkav" data-av="${esc(l.uid)}">${avatarHTML("", l.apelido)}</span><span class="rkt"><b><span data-ap-of="${esc(l.uid)}">@${esc(l.apelido)}</span>${l.uid === me ? `<span class="rkvoce">você</span>` : ""}</b><span class="rkmet"><b>${l.concluidos}</b> ${l.concluidos === 1 ? "concluído" : "concluídos"}</span></span></button>`).join("") : vazio}</div>
     </div>
     <p class="rknote">Ranking feito apenas com perfis públicos.</p>`;
@@ -1673,10 +1673,31 @@ function desenharPeriodo(area, d, f) {
   const cap = { alta: "O que mais cresceu nos últimos 7 dias · atualiza todo dia", semana: "De segunda até hoje · atualiza todo dia",
     mes: `${MESES_CAP[agora.getMonth()]} de ${agora.getFullYear()} até hoje · atualiza todo dia` }[f];
   const lista = p[f] || [];
-  area.innerHTML = `<p class="rkcap">${cap}</p>${lista.length ? `<div class="rkgrade">${lista.map((x, i) => `<div class="rkcard" data-x="${rkJSON(x)}">${rkCapa(x, "g")}<span class="rkn ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span><b>${esc(x.titulo)}</b></div>`).join("")}</div>`
-    : `<p class="rkvazio">Ainda não tem leituras neste período.</p>`}`;
-  // a posição fica no canto da capa
-  area.querySelectorAll(".rkcard").forEach(c => { const n = c.querySelector(".rkn"), cp = c.querySelector(".rkc"); if (n && cp) cp.appendChild(n); });
+  area.innerHTML = `<p class="rkcap">${cap}</p>${lista.length ? rkGrade(lista) : `<p class="rkvazio">Ainda não tem leituras neste período.</p>`}`;
+  rkPosNoCanto(area);   // a posição fica no canto da capa
+}
+// Por gênero: abas de texto com sublinhado + grade dos 10 mais lidos do gênero
+const rkGrade = (lista) => `<div class="rkgrade">${lista.map((x, i) => `<div class="rkcard" data-x="${rkJSON(x)}">${rkCapa(x, "g")}<span class="rkn ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span><b>${esc(x.titulo)}</b></div>`).join("")}</div>`;
+const rkPosNoCanto = (el) => el.querySelectorAll(".rkcard").forEach(c => { const n = c.querySelector(".rkn"), cp = c.querySelector(".rkc"); if (n && cp) cp.appendChild(n); });
+function desenharGenero(area, d) {
+  area.innerHTML = `<div class="rkgbar">${RK_GENEROS.map(g => `<button type="button" class="${g === rkEstado.g ? "on" : ""}" data-g="${esc(g)}">${esc(g)}</button>`).join("")}</div><div class="rkgconteudo"></div>`;
+  const gb = area.querySelector(".rkgbar"), cont = area.querySelector(".rkgconteudo");
+  gb.scrollLeft = rkEstado.gbarra;
+  gb.addEventListener("scroll", () => { rkEstado.gbarra = gb.scrollLeft; }, { passive: true });
+  const pinta = () => {
+    gb.querySelectorAll("[data-g]").forEach(b => b.classList.toggle("on", b.dataset.g === rkEstado.g));
+    const lista = (d.generos || {})[rkEstado.g] || [];
+    cont.innerHTML = `<p class="rkcap">Os mais lidos de ${esc(rkEstado.g)} entre todos os leitores · atualiza todo dia</p>${lista.length ? rkGrade(lista) : `<p class="rkvazio">Ainda não tem leituras deste gênero.</p>`}`;
+    rkPosNoCanto(cont); rkCarregaCapas(cont);
+  };
+  gb.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-g]"); if (!b || b.dataset.g === rkEstado.g) return;
+    rkEstado.g = b.dataset.g;
+    const bl = gb.getBoundingClientRect(), r = b.getBoundingClientRect();
+    if (r.left < bl.left) gb.scrollLeft -= (bl.left - r.left) + 8; else if (r.right > bl.right) gb.scrollLeft += (r.right - bl.right) + 8;
+    pinta();
+  });
+  pinta();
 }
 function abrirQuemLe(ch, titulo, dados) {
   const l = ((dados && dados.quem) || {})[ch] || [];

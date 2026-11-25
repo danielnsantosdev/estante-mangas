@@ -1,6 +1,6 @@
 // Ranking da Estante de Mangás.
 // Roda no GitHub todo dia (e manualmente na aba Actions) e grava o resultado no Firebase:
-//  - todo dia: guarda o histórico de leituras e calcula Em alta, Esta semana, Este mês e "Quem lê";
+//  - todo dia: guarda o histórico de leituras e calcula Em alta, Esta semana, Este mês, Por gênero e "Quem lê";
 //  - dia 1º (ou rodando manualmente): recalcula "Todos os tempos" (somando o histórico inteiro).
 // Só entram perfis PÚBLICOS e não ocultos. Leituras antigas continuam contando para as obras
 // mesmo se a pessoa apagar o mangá ou fechar o perfil (sem mostrar quem foi).
@@ -233,6 +233,37 @@ const ehCat = (k) => /^(al|mal)\d+$/.test(k || "");
   }
   const periodos = { geradoEm: Date.now(), mesRef, alta: await top(alta, 10), semana: await top(semana, 10), mes: await top(mes, 10) };
   await db.collection("ranking").doc("periodos").set(periodos);
+
+  // 5b) por gênero (todo dia): os mais lidos de cada gênero, somando o histórico inteiro
+  const GENEROS_RK = { "Ação": "Action", "Romance": "Romance", "Fantasia": "Fantasy", "Comédia": "Comedy", "Drama": "Drama", "Esportes": "Sports", "Mistério": "Mystery", "Terror": "Horror" };
+  const genRef = db.collection("rkcache").doc("generos");
+  const genCache = ((await genRef.get()).data() || {}).mapa || {};
+  let genNovos = 0;
+  async function generosDe(chave) {
+    if (!ehCat(chave)) return [];
+    if (genCache[chave]) return genCache[chave];
+    let lista = [];
+    const c = await db.collection("catalogo").doc(chave).get();
+    if (c.exists && Array.isArray(c.data().generos)) lista = c.data().generos.filter(g => GENEROS_RK[g]);
+    else {
+      const m = /^(al|mal)(\d+)$/.exec(chave);
+      try {
+        const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ query: `query{Media(${m[1] === "al" ? "id" : "idMal"}:${m[2]},type:MANGA){genres}}` }) });
+        const j = await r.json(); const en = (j.data && j.data.Media && j.data.Media.genres) || [];
+        lista = Object.entries(GENEROS_RK).filter(([, e]) => en.includes(e)).map(([pt]) => pt);
+      } catch (e) {}
+      await sleep(800);
+    }
+    genCache[chave] = lista; genNovos++; return lista;
+  }
+  const lidosTudo = conta(h => h.lido);
+  const porGenero = {}; for (const g in GENEROS_RK) porGenero[g] = new Map();
+  for (const [chave, v] of lidosTudo) for (const g of await generosDe(chave)) porGenero[g].set(chave, v);
+  if (genNovos) await genRef.set({ mapa: genCache });
+  const generos = { geradoEm: Date.now(), lista: {} };
+  for (const g in porGenero) generos.lista[g] = await top(porGenero[g], 10);
+  await db.collection("ranking").doc("generos").set(generos);
 
   // 6) todos os tempos (dia 1º, ou quando ainda não existe)
   const temTodos = (await db.collection("ranking").doc("todos").get()).exists;

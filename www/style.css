@@ -595,6 +595,12 @@ button.rkl{cursor:pointer}
 .mini.rktem{background:none!important;border-color:var(--c-lendo)!important;color:var(--c-lendo);display:inline-flex;align-items:center}
 .rkav .av{width:38px;height:38px}
 .rkvoce{font-size:10.5px;font-weight:700;border:1.5px solid var(--ink);border-radius:999px;padding:0 6px;margin-left:5px;background:#fde68a;color:#141414;vertical-align:1px}
+/* Por gênero: abas de texto com sublinhado */
+.rkgconteudo{display:flex;flex-direction:column;gap:12px}
+.rkgbar{display:flex;gap:22px;overflow-x:auto;scrollbar-width:none;border-bottom:1.5px solid var(--soft);padding:0 4px;margin-bottom:4px}
+.rkgbar::-webkit-scrollbar{display:none}
+.rkgbar button{flex:none;background:none;border:0;border-radius:0;padding:6px 2px 9px;font-size:13.5px;font-weight:500;color:var(--muted);border-bottom:2.5px solid transparent;margin-bottom:-1.5px;box-shadow:none;min-height:0}
+.rkgbar button.on{color:var(--ink);font-weight:700;border-bottom-color:var(--ink)}
 /* grade de cards */
 .rkgrade{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .rkcard{border:var(--line);border-radius:12px;background:var(--paper);padding:8px;display:flex;flex-direction:column;gap:7px;min-width:0}
@@ -639,4 +645,7 @@ button.rkl{cursor:pointer}
   .rkconteudo > .rkcap{max-width:100%}
   .rkgrade ~ .rkcap,.rkconteudo .rkcap:has(+ .rkgrade){max-width:960px;width:100%;margin-left:auto;margin-right:auto}
   .rkcard b{font-size:14px}
+  .rkgbar{justify-content:center;flex-wrap:wrap;gap:26px}
+  .rkgbar button{font-size:14px;padding:8px 2px 10px}
+  .rkgconteudo .rkcap{max-width:960px;width:100%;margin-left:auto;margin-right:auto}
 }
