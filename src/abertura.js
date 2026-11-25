@@ -107,26 +107,36 @@ function somAbertura(fim, n, passo, ini) {
   const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
   const a = new AC(); if (a.state === "suspended") a.resume().catch(() => {});
   const t = a.currentTime + .03, rv = reverb(a);
-  pagina(a, t + .03, .12, rv);
-  for (let i = 0; i < n; i++) pagina(a, t + ini + i * passo, .09 + Math.random() * .04, rv);
-  [DO * 2, MI * 2, SOL * 2, DO * 4, MI * 2, SOL * 2, SI * 2, RE * 4].forEach((f, i) => nota(a, t + ini + i * passo * 1.7, f, .35, .035, "sine", rv, .004));
-  [DO * 4, MI * 4, SOL * 4, DO * 8].forEach((f, i) => nota(a, t + fim + i * .045, f, .9, .05, "sine", rv, .003));
+  pagina(a, t + .75, .13, rv);   // capa abrindo
+  for (let i = 0; i < n; i++) pagina(a, t + ini + i * passo, .085 + Math.random() * .035, rv);
+  [DO * 2, MI * 2, SOL * 2, DO * 4, MI * 2, SOL * 2, SI * 2, RE * 4].forEach((f, i) => nota(a, t + .55 + i * .2, f, .4, .032, "sine", rv, .004));
+  [DO * 4, MI * 4, SOL * 4, DO * 8].forEach((f, i) => nota(a, t + fim + i * .05, f, 1.1, .05, "sine", rv, .003));
   sino(a, t + fim, DO * 2, .07, rv);
   return a;
 }
 const CSS = `
-#abertura{position:fixed;inset:0;z-index:9999;background:#f4efe5;background-image:radial-gradient(rgba(20,20,20,.09) 1px,transparent 1.3px);background-size:14px 14px;display:grid;place-items:center;overflow:hidden;transition:opacity .3s;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#abertura{position:fixed;inset:0;z-index:9999;background:#f4efe5;background-image:radial-gradient(rgba(20,20,20,.09) 1px,transparent 1.3px);background-size:14px 14px;display:grid;place-items:center;overflow:hidden;transition:opacity .45s ease;cursor:pointer;-webkit-tap-highlight-color:transparent}
 #abertura.sai{opacity:0}
-#abertura .ab-logo{position:relative;display:flex;flex-direction:column;align-items:center;gap:1.4vh;z-index:9;pointer-events:none;clip-path:inset(0 100% 0 0);animation:ab-escreve 1.05s steps(14) .25s forwards}
+#abertura .ab-logo{position:relative;display:flex;flex-direction:column;align-items:center;gap:1.4vh;z-index:9;pointer-events:none;clip-path:inset(0 100% 0 0)}
+#abertura.go .ab-logo{animation:ab-escreve 1.35s steps(16) .95s forwards}
 @media (min-aspect-ratio:1/1){ #abertura .ab-logo{flex-direction:row;gap:2vw} }
 #abertura .ab-selo{font-family:Bangers,Impact,sans-serif;font-size:min(17vw,12vh);line-height:1;color:#fff;background:#e0312b;border:4px solid #141414;padding:.12em .28em 0;transform:rotate(-4deg);box-shadow:7px 7px 0 #141414;letter-spacing:2px}
 #abertura .ab-dm{font-family:Bangers,Impact,sans-serif;font-size:min(12vw,9vh);line-height:1;color:#141414;letter-spacing:2px;white-space:nowrap;background:#f4efe5;padding:.05em .25em;border:3px solid #141414;box-shadow:4px 4px 0 #141414}
-#abertura .ab-livro{position:absolute;height:min(70vh,118vw);aspect-ratio:3/4.3;z-index:7;perspective:1600px;animation:ab-livrosai .35s cubic-bezier(.7,0,.3,1) 1.45s forwards}
-#abertura .ab-folha{position:absolute;inset:0;background:#fffdf8;border:2px solid #141414;transform-origin:left center;overflow:hidden;animation:ab-folheia .22s cubic-bezier(.6,0,.4,1) both}
+#abertura .ab-livro{position:absolute;height:min(70vh,118vw);aspect-ratio:3/4.3;z-index:7;perspective:1600px;opacity:0;transform:scale(.94) translateY(2%)}
+#abertura.go .ab-livro{animation:ab-livroentra .45s cubic-bezier(.2,.8,.2,1) .25s forwards,ab-livrosai .45s cubic-bezier(.7,0,.3,1) 2.3s forwards}
+#abertura .ab-folha,#abertura .ab-capa{position:absolute;inset:0;border:2px solid #141414;transform-origin:left center;overflow:hidden}
+#abertura .ab-folha{background:#fffdf8}
+#abertura.go .ab-folha{animation:ab-folheia .26s cubic-bezier(.6,0,.4,1) both}
+#abertura .ab-capa{background:#141414;display:grid;place-items:end start;padding:8%}
+#abertura .ab-capa::before{content:"";position:absolute;inset:0;background:repeating-conic-gradient(from 0deg at 60% 40%,rgba(255,255,255,.12) 0deg 2deg,transparent 2deg 9deg)}
+#abertura .ab-capa b{position:relative;font-family:Bangers,Impact,sans-serif;font-weight:400;color:#fff;font-size:min(9vw,6vh);letter-spacing:1px}
+#abertura .ab-capa i{position:absolute;top:8%;left:8%;right:8%;height:12%;background:#e0312b;border:2px solid #fff}
+#abertura.go .ab-capa{animation:ab-folheia .38s cubic-bezier(.6,0,.4,1) .75s both}
 #abertura .ab-folha svg{position:absolute;inset:0;width:100%;height:100%}
+@keyframes ab-livroentra{100%{opacity:1;transform:none}}
 @keyframes ab-folheia{0%{transform:rotateY(0)}100%{transform:rotateY(-178deg);filter:brightness(.8)}}
 @keyframes ab-escreve{100%{clip-path:inset(0 0 0 0)}}
-@keyframes ab-livrosai{100%{transform:translateY(120%) rotate(12deg);opacity:0}}
+@keyframes ab-livrosai{0%{opacity:1;transform:none}100%{transform:translateY(120%) rotate(12deg);opacity:0}}
 `;
 function lerApar() { try { return JSON.parse(localStorage.getItem(APAR_KEY) || "{}") || {}; } catch (e) { return {}; } }
 (function abertura() {
@@ -134,20 +144,31 @@ function lerApar() { try { return JSON.parse(localStorage.getItem(APAR_KEY) || "
   if (ap.abertura === "off") return;
   if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const st = document.createElement("style"); st.textContent = CSS; document.head.appendChild(st);
-  const N = 12, passo = .075, ini = .15, fim = 1.45;
+  // linha do tempo (segundos depois que começa): capa abre 0,75 · páginas de 0,95 a 2,2 · nome aparece até 2,3 · livro sai 2,3 · fica até 3,1
+  const N = 12, passo = .105, ini = .95, nome = 2.3, total = 3.1;
   const el = document.createElement("div"); el.id = "abertura"; el.setAttribute("aria-hidden", "true");
   el.innerHTML = `<div class="ab-logo"><span class="ab-selo">ESTANTE</span><span class="ab-dm">DE MANGÁS</span></div>
-    <div class="ab-livro">${Array.from({ length: N }, (_, i) => `<div class="ab-folha" style="z-index:${N - i};animation-delay:${ini + i * passo}s">${paginaManga(i + 3, i % 3 === 2)}</div>`).join("")}</div>`;
+    <div class="ab-livro"><div class="ab-capa" style="z-index:${N + 1}"><i></i><b>VOL. 1</b></div>${Array.from({ length: N }, (_, i) => `<div class="ab-folha" style="z-index:${N - i};animation-delay:${ini + i * passo}s">${paginaManga(i + 3, i % 3 === 2)}</div>`).join("")}</div>`;
   document.body.appendChild(el);
-  let audio = null, acabou = false;
-  try { if (ap.aberturaSom !== "off") audio = somAbertura(fim, N, passo, ini); } catch (e) {}
+  let audio = null, acabou = false, comecou = false, tFim = null;
   const sair = () => {
-    if (acabou) return; acabou = true;
+    if (acabou) return; acabou = true; clearTimeout(tFim);
     el.classList.add("sai");
-    setTimeout(() => { el.remove(); st.remove(); }, 320);
-    // ao pular, o som some junto (sem cortar seco)
-    if (audio) setTimeout(() => { try { audio.close(); } catch (e) {} }, 1200);
+    setTimeout(() => { el.remove(); st.remove(); }, 480);
+    if (audio) setTimeout(() => { try { audio.close(); } catch (e) {} }, 1500);
   };
+  // começa só quando a tela já está desenhada (e as fontes prontas), com uma pausa curta
+  const comecar = () => {
+    if (comecou || acabou) return; comecou = true;
+    setTimeout(() => {
+      if (acabou) return;
+      el.classList.add("go");
+      try { if (ap.aberturaSom !== "off") audio = somAbertura(nome, N, passo, ini); } catch (e) {}
+      tFim = setTimeout(sair, total * 1000);
+    }, 350);
+  };
+  const fontes = document.fonts && document.fonts.ready ? Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 800))]) : Promise.resolve();
+  fontes.then(() => requestAnimationFrame(() => requestAnimationFrame(comecar)));
+  setTimeout(comecar, 1500);   // garantia, se algo demorar
   el.addEventListener("pointerdown", () => { if (audio) try { audio.close(); } catch (e) {} audio = null; sair(); });
-  setTimeout(sair, 1950);
 })();
