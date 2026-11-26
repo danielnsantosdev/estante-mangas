@@ -1602,7 +1602,7 @@ function openInfo(mid) {
       if (!c) { ci.innerHTML = navigator.onLine ? "" : `<div class="hint">Sem internet: gêneros e sinopse aparecem quando conectar.</div>`; return; }
       const idd = idadeDe(c);
       ci.innerHTML = `${idd ? `<div class="idaderow">${seloIdade(idd)}<span>Classificação indicativa: <b>${idd === "Livre" ? "Livre para todos" : "não recomendado para menores de " + idd.replace("+", " anos")}</b></span></div>` : ""}
-        ${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+        ${(c.generos || []).length ? `<p class="gentxt">${c.generos.map(esc).join(" · ")}</p>` : ""}
         <div class="infoanime" id="infoAnime"></div>
         <div class="sinopse"><b>Sinopse</b>${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
       preencherAnime(ci.querySelector("#infoAnime"), it.catId);
@@ -2002,7 +2002,7 @@ async function openObra(x) {
     if (!c) { inf.innerHTML = `<p class="hint">Sem informações do catálogo para esta obra.</p>`; return; }
     const idd = idadeDe(c);
     inf.innerHTML = `${idd ? `<div class="idaderow">${seloIdade(idd)}<span>${idd === "Livre" ? "Livre para todos" : "Não recomendado para menores de " + idd.replace("+", " anos")}</span></div>` : ""}
-      ${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+      ${(c.generos || []).length ? `<p class="gentxt">${c.generos.map(esc).join(" · ")}</p>` : ""}
       <div class="sinopse">${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
   });
 }
