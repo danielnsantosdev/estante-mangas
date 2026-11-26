@@ -1,5 +1,5 @@
 {
-  "quando": "2026-11-26T12:07:41.937Z",
+  "quando": "2026-11-26T13:33:31.180Z",
   "busca": {
     "The Beginning After the End": {
       "malId": 0,
@@ -18,6 +18,19 @@
       "situacao": "Publishing"
     }
   },
+  "capas": {
+    ".512.jpg sem referer": "200 image/jpeg 136650B ",
+    ".512.jpg referer localhost": "200 image/jpeg 136650B ",
+    ".512.jpg referer site": "200 image/jpeg 59480B ",
+    ".256.jpg sem referer": "200 image/jpeg 43957B ",
+    ".256.jpg referer localhost": "200 image/jpeg 43957B ",
+    ".256.jpg referer site": "200 image/jpeg 59480B ",
+    " sem referer": "200 image/jpeg 778616B ",
+    " referer localhost": "200 image/jpeg 778616B ",
+    " referer site": "200 image/jpeg 59480B ",
+    "wsrv": "400 application/json 73B"
+  },
+  "anilist": "200 {\"data\":{\"Page\":{\"media\":[{\"id\":123573,\"title\":{\"romaji\":\"Baekjakgaui Mangnaniga Doeeotda\",\"english\":\"Lout of Count\\u2019s Family\"},\"coverImage\":{\"large\":\"https:\\/\\/s4.anilist.co\\/file\\/anilistcdn\\/media\\/manga\\/cover\\/medium\\/bx123573-LKoCKwRouEMW.png\"}}]}}}",
   "catalogoSemMal": [
     {
       "id": "md4ada20eb085a491a8c49477ab42014d7",
