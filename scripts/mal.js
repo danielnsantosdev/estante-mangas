@@ -76,6 +76,13 @@ const precisa = (c) => {
     for (const u of ["https://api.jikan.moe/v4", "https://myanimelist.net/manga/13", "https://api.myanimelist.net/v2/manga/13"]) {
       try { const r = await fetch(u); out[u] = r.status; } catch (e) { out[u] = "falhou: " + ((e.cause && (e.cause.code || e.cause.message)) || e.message); }
     }
+    try {
+      const h = await (await fetch("https://myanimelist.net/manga/13", { headers: { "User-Agent": "Mozilla/5.0 EstanteDeMangas" } })).text();
+      const i = h.indexOf("Related Entries"); out.relacionadas = i >= 0 ? h.slice(i, i + 6000) : "(sem Related Entries)";
+      const j = h.search(/Status:<\/span>/); out.statusTrecho = j >= 0 ? h.slice(j, j + 120) : "(sem Status)";
+      const h2 = await (await fetch("https://myanimelist.net/anime/21", { headers: { "User-Agent": "Mozilla/5.0 EstanteDeMangas" } })).text();
+      const k = h2.search(/Status:<\/span>/); out.animeStatusTrecho = k >= 0 ? h2.slice(k, k + 120) : "(sem Status)";
+    } catch (e) { out.paginaErro = e.message; }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out.resultado || out.erro));
