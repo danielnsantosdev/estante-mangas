@@ -72,6 +72,8 @@ const nomesDe = (c) => [...new Set([c.titulo, c.titulo2, c.nomeEN, c.nomePT, ...
 const nomesPagina = (h) => {
   const out = [];
   const t = /<span itemprop="name"[^>]*>([\s\S]*?)<\/span>/.exec(h || ""); if (t) out.push(t[1].replace(/<br[^>]*>[\s\S]*$/, "").replace(/<[^>]+>/g, ""));
+  const h1 = /<h1 class="title-name[^"]*"><strong>([^<]+)<\/strong>/.exec(h || ""); if (h1) out.push(h1[1]);
+  const te = /<p class="title-english[^"]*">([^<]+)<\/p>/.exec(h || ""); if (te) out.push(te[1]);
   for (const m of (h || "").matchAll(/<span class="dark_text">(?:English|Synonyms|Japanese|Korean|Chinese|German|French|Spanish):<\/span>\s*([^<]+)</g)) out.push(...m[1].split(/,\s*/));
   return out.map(x => normNome(x.replace(/&#039;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, '"'))).filter(Boolean);
 };
@@ -80,8 +82,7 @@ async function acharMalId(c) {
   const consultas = [...new Set([c.nomeEN, c.titulo, c.titulo2].filter(Boolean).map(x => String(x).slice(0, 60)))].slice(0, 2);
   const vistos = new Set();
   for (const q of consultas) {
-    let itens = [];
-    try { itens = (JSON.parse(await pagina("/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent(q))).categories || []).flatMap(k => k.items || []); } catch (e) { logDiag.push("busca " + q + ": " + e.message); }
+    const itens = await prefixo("manga", q);
     const direto = itens.find(x => nomes.includes(normNome(x.name))); if (direto) return +direto.id;
     for (const x of itens.slice(0, 5)) {
       if (vistos.has(x.id)) continue; vistos.add(x.id);
@@ -90,7 +91,42 @@ async function acharMalId(c) {
   }
   return 0;
 }
+async function prefixo(tipo, q) {
+  try { return (JSON.parse(await pagina(`/search/prefix.json?type=${tipo}&v=1&keyword=` + encodeURIComponent(String(q).slice(0, 60)))).categories || []).flatMap(k => k.items || []); }
+  catch (e) { logDiag.push(`busca ${tipo} ${q}: ${e.message}`); return []; }
+}
+// obra que não existe como mangá no MyAnimeList (ex.: webcomic americano): procura o anime direto pelo nome.
+// só vale se o nome bater com o título/inglês/sinônimos do anime e se o anime não for história original.
+async function animePorNome(c) {
+  const nomes = nomesDe(c).filter(n => n.length >= 6); if (!nomes.length) return { st: null, aid: 0 };
+  const consultas = [...new Set([c.nomeEN, c.titulo, c.titulo2].filter(Boolean))].slice(0, 2);
+  const vistos = new Set(); let achado = null;
+  for (const q of consultas) {
+    for (const x of (await prefixo("anime", q)).slice(0, 6)) {
+      if (vistos.has(x.id)) continue; vistos.add(x.id);
+      const h = await pagina(`/anime/${x.id}`);
+      const fonte = (/Source:<\/span>\s*([^<]+)</.exec(h) || [])[1] || "";
+      if (/original/i.test(fonte) || !nomesPagina(h).some(n => nomes.includes(n))) continue;
+      const sa = statusDe(h);
+      if (sa === "Currently Airing" || sa === "Finished Airing") return { st: "dis", aid: +x.id, porNome: true };
+      if (sa === "Not yet aired" && !achado) achado = { st: "anu", aid: +x.id, porNome: true };
+    }
+    if (achado) break;
+  }
+  return achado || { st: null, aid: 0 };
+}
+// situação das obras que só existem no MangaDex (chave md + código da obra)
+async function situacaoMangaDex(id) {
+  const m = /^md([0-9a-f]{32})$/.exec(id); if (!m) return "";
+  const u = m[1].replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+  try {
+    const r = await fetch("https://api.mangadex.org/manga/" + u, { headers: { "User-Agent": "EstanteDeMangas/1.0" }, signal: AbortSignal.timeout(20000) });
+    const st = ((await r.json()).data || {}).attributes?.status;
+    return { ongoing: "Publishing", completed: "Finished", hiatus: "On Hiatus", cancelled: "Discontinued" }[st] || "";
+  } catch (e) { logDiag.push("MangaDex " + id + ": " + e.message); return ""; }
+}
 const VALE = { anu: 20 * 3600e3, nada: 3 * 864e5, sit: 7 * 864e5 };
+const precisaAnime = (c) => { const a = c.anime || null; return !(a && (a.st === "dis" || Date.now() - (c.animeEm || 0) < (a.st === "anu" ? VALE.anu : VALE.nada))); };
 const precisa = (c) => {
   const a = c.anime || null, agora = Date.now();
   const animeOk = a && (a.st === "dis" || agora - (c.animeEm || 0) < (a.st === "anu" ? VALE.anu : VALE.nada));
@@ -101,13 +137,12 @@ const precisa = (c) => {
 (async () => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
-    out.busca = {}; out.nomes = {};
-    for (const k of ["The Beginning After the End", "Beginning After the End", "Kkeut-i Anin Sijak", "Kkeuti Aninsijak"]) {
-      try { out.nomes[k] = (JSON.parse(await pagina("/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent(k))).categories || []).flatMap(x => x.items || []).map(x => x.id + " " + x.name + " (" + (x.payload || {}).media_type + ")"); } catch (e) { out.nomes[k] = e.message; }
-    }
+    out.busca = {};
     for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
-      try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : "não encontrado"; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
+      try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : { malId: 0, anime: await animePorNome(c) }; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
     }
+    out.situacaoMangaDex = await situacaoMangaDex("md6e3553b9ddb54d37b7a399998044774e");
+    out.prefixoAnime = (await prefixo("anime", "The Beginning After the End")).slice(0, 6).map(x => x.id + " " + x.name);
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
@@ -127,6 +162,16 @@ const precisa = (c) => {
   if (semId.length) docs = (await db.collection("catalogo").get()).docs;
   const fila = docs.filter(d => { const c = d.data() || {}; const mid = c.malId || (/^mal(\d+)$/.exec(d.id) || [])[1]; return mid && precisa(c); }).slice(0, 25);
   let n = 0;
+  const soNome = docs.filter(d => { const c = d.data() || {}; return !c.malId && !/^mal\d+$/.test(d.id) && c.malBuscaEm && precisaAnime(c); }).slice(0, 10);
+  for (const d of soNome) {
+    try {
+      const a = await animePorNome(d.data() || {});
+      const novo = { anime: a, animeEm: Date.now() };
+      const sit = await situacaoMangaDex(d.id); if (sit) Object.assign(novo, { situacao: sit, situacaoEm: Date.now() });
+      await d.ref.set(novo, { merge: true });
+      console.log(`${d.id}: anime pelo nome ${a.st || "—"}`); n++;
+    } catch (e) { console.log(d.id + " (anime pelo nome): " + e.message); }
+  }
   for (const d of fila) {
     const c = d.data() || {}, mid = +(c.malId || /^mal(\d+)$/.exec(d.id)[1]);
     try {
