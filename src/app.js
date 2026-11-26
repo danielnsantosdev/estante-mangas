@@ -724,8 +724,9 @@ function animeDoMal(mid, frente) {
     return animePendente.get(mid);
   }
   const pr = (async () => {
-    const r = await jikan(`/manga/${mid}/relations`, frente);
-    const ids = ((r && r.data) || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
+    const r = await jikan(`/manga/${mid}/full`, frente);
+    guardaSit(mid, r && r.data && r.data.status);
+    const ids = ((r && r.data && r.data.relations) || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
     let st = null, aid = 0;
     for (const id of ids.slice(0, 6)) {
       const a = await jikan(`/anime/${id}`, frente); const sa = a && a.data && a.data.status;
@@ -737,6 +738,23 @@ function animeDoMal(mid, frente) {
     return v;
   })().finally(() => animePendente.delete(mid));
   animePendente.set(mid, pr); return pr;
+}
+// situação da obra no MyAnimeList (Finished não volta atrás; as outras conferem de novo a cada 7 dias)
+const SIT_KEY = "estante-situacao-mal-v1";
+let sitCache = lerJSON(SIT_KEY, {});
+const SIT_TXT = { "Publishing": "Lançando", "Finished": "Finalizada", "On Hiatus": "Em hiato", "Discontinued": "Cancelada", "Not yet published": "Em breve" };
+function guardaSit(mid, st) { if (!st) return; sitCache[mid] = { s: st, em: Date.now() }; salvarJSON(SIT_KEY, sitCache); }
+async function situacaoDoMal(mid, frente) {
+  const c = sitCache[mid];
+  if (c && (c.s === "Finished" || c.s === "Discontinued" || Date.now() - c.em < 7 * 864e5)) return c.s;
+  const r = await jikan(`/manga/${mid}`, frente); const st = r && r.data && r.data.status;
+  guardaSit(mid, st); return st;
+}
+async function preencherSit(el, catId) {
+  if (!el) return; el.textContent = "—";
+  const mid = await malDe(catId); if (!mid || !el.isConnected) return;
+  if (sitCache[mid]) el.textContent = SIT_TXT[sitCache[mid].s] || "—";
+  try { const st = await situacaoDoMal(mid, true); if (el.isConnected) el.textContent = SIT_TXT[st] || "—"; } catch (e) {}
 }
 function animeHTML(v) {
   if (!v || !v.st) return "";
@@ -879,7 +897,7 @@ function openEditor(id, opt = {}) {
   let confirmDel = false, modo = "ficha", aba = 0, lixeiraCache = null;
   try { modo = localStorage.getItem(ED_MODO_KEY) === "abas" && !opt.ficha ? "abas" : "ficha"; } catch (e) {}
   const stIni = it ? stOf(it) : "lendo", notaIni = it ? parseNota(it.nota) : 0;
-  const notaTxt = (n) => n ? fmtNota(n) : "Sem nota";
+  const notaTxt = (n) => n ? fmtNota(n) : "—";   // sem nota: só um traço, para caber a situação ao lado
   openModal(`
     <form id="ed" class="ed" autocomplete="off" novalidate>
       <div class="mhead"><h2>${it ? "Editar mangá" : "Novo mangá"}</h2><button type="button" class="edmodo" id="edModo"></button><button type="button" class="icon-btn" data-x>✕</button></div>
@@ -891,9 +909,10 @@ function openEditor(id, opt = {}) {
           <div id="dupBox"></div>
           <div class="edcampos">
             <div class="esep"></div>
-            <div class="egrid">
-              <div class="ecol"><span class="elbl">Capítulo</span><div class="estep"><button type="button" data-cap="-1" aria-label="Menos um">−</button><input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"><button type="button" data-cap="1" aria-label="Mais um">+</button></div></div>
+            <div class="egrid egrid3">
+              <div class="ecol"><span class="elbl">Capítulo</span><div class="estep"><button type="button" data-cap="-1" aria-label="Menos um">−</button><input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"><button type="button" data-cap="1" aria-label="Mais um">+</button></div>${it && chk[it.id] && Number(chk[it.id].latest) > 0 ? `<span class="esaiu">Saiu até <b>${fmtCap(chk[it.id].latest)}</b></span>` : ""}</div>
               <div class="ecol"><span class="elbl">Nota</span><label class="ednota"><span id="notaTxt" class="${notaIni ? "" : "vazia"}">${notaTxt(notaIni)}</span> ▾<select name="nota" aria-label="Nota"><option value="">Sem nota</option>${NOTAS.map(n => `<option value="${n}" ${notaIni === n ? "selected" : ""}>${fmtNota(n)}</option>`).join("")}</select></label></div>
+              <div class="ecol"><span class="elbl">Situação</span><span class="edext" id="edSit">—</span></div>
             </div>
             <div class="ecol"><span class="elbl">Status</span><div class="edst">${Object.entries(STATUS).map(([k, v]) => `<button type="button" class="s-${k} ${k === stIni ? "on" : ""}" data-st="${k}"><i></i>${v.label}</button>`).join("")}</div></div>
             <label class="etg"><span class="t"><b>Privado</b><small>Só você vê este mangá</small></span><input type="checkbox" id="edPriv" ${it && it.privado ? "checked" : ""}><span class="esw"></span></label>
@@ -997,7 +1016,7 @@ function openEditor(id, opt = {}) {
       titleInput.value = catNome; mostrarEscolha(c); pintaTopo();
       if (idadeDe(c) === "18+") { root.querySelector("#edPriv").checked = true; root.querySelector("#edPrivDica").textContent = "Obra 18+: sugerimos deixar privada. Desmarque se quiser mostrar na sua estante pública."; }
       if (c.capa && (!cover || !it)) { cover = c.capa; paintCover(); }
-      preencherAnime(hAnime, key);
+      preencherAnime(hAnime, key).then(() => preencherSit(sitEl, key));
       if (!it) {
         const naEst = [...items.values()].find(x => x.catId === key);
         if (naEst) { mostrarDup("est", naEst); return; }
@@ -1005,7 +1024,8 @@ function openEditor(id, opt = {}) {
         if (naLix && catId === key) mostrarDup("lix", naLix);
       }
     };
-    if (catId) { lerCatalogo(catId).then(c => c && mostrarEscolha(c)); preencherAnime(hAnime, catId); }
+    const sitEl = root.querySelector("#edSit");
+    if (catId) { lerCatalogo(catId).then(c => c && mostrarEscolha(c)); preencherAnime(hAnime, catId).then(() => preencherSit(sitEl, catId)); }
     if (!it) { montarBuscaCatalogo(root, "", aoEscolher); lerLixeira(); }
     const cl = root.querySelector("#catLink"); if (cl) cl.onclick = () => montarBuscaCatalogo(root, it.title, aoEscolher);
     // ----- capa -----
