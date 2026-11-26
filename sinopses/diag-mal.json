@@ -1,5 +1,15 @@
 {
-  "quando": "2026-11-26T11:53:21.976Z",
-  "busca": {},
+  "quando": "2026-11-26T11:56:19.263Z",
+  "busca": {
+    "The Beginning After the End": "não encontrado",
+    "One Punch-Man": {
+      "malId": 44347,
+      "anime": {
+        "st": "dis",
+        "aid": 30276
+      },
+      "situacao": "Publishing"
+    }
+  },
   "log": []
 }
