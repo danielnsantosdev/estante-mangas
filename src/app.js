@@ -195,6 +195,7 @@ async function checkInvite(user) {
 let updateChecked = false;
 async function checkUpdate() {
   if (updateChecked) return; updateChecked = true;
+  if (!window.estanteNative && !isNativeApp) return;   // no navegador (iPhone) o site já se atualiza sozinho
   const mine = Number(window.APP_VERSION || 0);
   const m = String(downloadUrl || "").match(/github\.com\/([^/]+)\/([^/]+)/);
   if (!mine || !m) return;
@@ -1146,6 +1147,7 @@ function openGoto(id) {
 
 // ---------- menu ----------
 const isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+if (!isNativeApp && !window.estanteNative) document.documentElement.classList.add("web");
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); return true; }
   catch (e) {
@@ -2932,7 +2934,7 @@ const GUIA = [
   ["Aparência", "aparencia", "<ol><li>No botão de quadradinhos ao lado dos filtros.</li><li>Escolha cards por linha, tamanho do texto, tema e a abertura do app.</li></ol>"],
   ["Lixeira", "lixeira", "<ol><li>No menu ☰ › <b>Lixeira</b>.</li><li>O que você apagou fica lá por 30 dias e pode ser restaurado.</li><li>Para apagar de vez, use a lixeirinha do mangá ou <b>Esvaziar lixeira</b>.</li></ol>"],
   ["Conta (senha, excluir)", "menu", "<ol><li>No menu ☰: <b>Trocar senha</b> e <b>Excluir minha conta</b>.</li><li>Excluir apaga a conta e todos os seus dados.</li></ol>"],
-  ["Instalar e atualizar", "menu", "<ol><li>O app se atualiza sozinho ao abrir.</li><li>Quando sai uma versão nova para baixar, aparece um aviso no topo.</li></ol>"],
+  ["Instalar e atualizar", "menu", "<ol><li>O app se atualiza sozinho ao abrir.</li><li>Quando sai uma versão nova para baixar, aparece um aviso no topo.</li><li><b>iPhone:</b> abra danielnsantosdev.github.io/estante-mangas no Safari, toque em Compartilhar e em <b>Adicionar à Tela de Início</b>.</li></ol>"],
 ];
 function openGuia() {
   openModal(`

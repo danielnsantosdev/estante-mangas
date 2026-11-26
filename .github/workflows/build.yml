@@ -78,6 +78,35 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/EstanteMangas-Setup.exe }
 
+  site:
+    # Versão para iPhone (e qualquer navegador): danielnsantosdev.github.io/estante-mangas
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund
+      - run: npm run build:web
+      - name: Número da versão e chaves da busca de GIF
+        shell: bash
+        env:
+          GIPHY_KEY: ${{ secrets.GIPHY_KEY }}
+          KLIPY_KEY: ${{ secrets.KLIPY_KEY }}
+        run: |
+          echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
+          G=$(printf '%s' "$GIPHY_KEY" | tr -cd 'A-Za-z0-9_-'); K=$(printf '%s' "$KLIPY_KEY" | tr -cd 'A-Za-z0-9_-')
+          printf 'window.GIF_KEYS = { giphy: "%s", klipy: "%s" };\n' "$G" "$K" >> www/version.js
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: www }
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
   publicar:
     needs: [android, windows]
     runs-on: ubuntu-latest

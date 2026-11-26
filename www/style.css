@@ -1039,3 +1039,10 @@ textarea.einp{resize:vertical;line-height:1.4;min-height:70px}
 .npend .nt{min-width:150px}
 .nacts{display:flex;gap:6px;margin-left:auto}
 @media (max-width:520px){ .nacts{width:100%;justify-content:flex-end} }
+
+/* ---------- iPhone (site instalado na Tela de Início): respeita o entalhe e a barra de baixo ---------- */
+@media (display-mode: standalone){
+  html.web body{padding-top:env(safe-area-inset-top)}
+  html.web .fab{bottom:calc(18px + env(safe-area-inset-bottom))}
+  html.web .modal{padding-bottom:env(safe-area-inset-bottom)}
+}
