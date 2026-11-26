@@ -772,6 +772,10 @@ function render() {
   const grid = $("#grid"), empty = $("#empty");
   if (!loaded || (ui.visit && ui.visit.loading)) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando estante…</div>`; return; }
   const arr = filtered();
+  // o botão tocado (livrinho, +, −) fica com foco; se o card dele for trocado, o navegador joga a página para o topo.
+  // tira o foco antes e devolve a rolagem onde estava.
+  const yAntes = window.scrollY, ae = document.activeElement;
+  if (ae && ae !== document.body && grid.contains(ae)) ae.blur();
   const antigos = new Map([...grid.children].map(el => [el.dataset.id, el]));
   const novos = [], els = [];
   for (const it of arr) {
@@ -791,6 +795,7 @@ function render() {
   // só mexe na ordem/quantidade quando mudou
   const mesmaOrdem = els.length === grid.children.length && els.every((e, i) => grid.children[i] === e);
   if (!mesmaOrdem) grid.replaceChildren(...els);
+  if (Math.abs(window.scrollY - yAntes) > 1) window.scrollTo(0, yAntes);
   novos.forEach(n => n.addEventListener("animationend", () => n.classList.remove("entra"), { once: true }));
   novos.flatMap(n => [...n.querySelectorAll("img[data-fallback]")]).forEach(img => img.addEventListener("error", () => {
     const card = img.closest(".card"); const it = card && source().get(card.dataset.id);

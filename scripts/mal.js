@@ -65,6 +65,26 @@ async function conferir(mid) {
   }
   return { anime: { st, aid }, situacao: statusDe(h) };
 }
+// obra que entrou só pelo MangaDex (ou sem o número do MAL): procura no MyAnimeList pelo nome e só aceita
+// quando um dos nomes da obra bate com o título, o nome em inglês ou os sinônimos da página do MAL
+const normNome = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9\u1100-\u11ff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]+/g, " ").trim();
+const nomesDe = (c) => [...new Set([c.titulo, c.titulo2, c.nomeEN, c.nomePT, ...(Array.isArray(c.nomes) ? c.nomes : [])].map(normNome).filter(n => n.length >= 3))];
+const nomesPagina = (h) => {
+  const out = [];
+  const t = /<span itemprop="name"[^>]*>([\s\S]*?)<\/span>/.exec(h || ""); if (t) out.push(t[1].replace(/<br[^>]*>[\s\S]*$/, "").replace(/<[^>]+>/g, ""));
+  for (const m of (h || "").matchAll(/<span class="dark_text">(?:English|Synonyms|Japanese|Korean|Chinese|German|French|Spanish):<\/span>\s*([^<]+)</g)) out.push(...m[1].split(/,\s*/));
+  return out.map(x => normNome(x.replace(/&#039;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, '"'))).filter(Boolean);
+};
+async function acharMalId(c) {
+  const nomes = nomesDe(c); if (!nomes.length) return 0;
+  const q = c.nomeEN || c.titulo || nomes[0];
+  const h = await pagina("/manga.php?cat=manga&q=" + encodeURIComponent(String(q).slice(0, 80)));
+  const cand = [];
+  for (const m of (h || "").matchAll(/href="https:\/\/myanimelist\.net\/manga\/(\d+)\/[^"]*"[^>]*>\s*<strong>([^<]+)<\/strong>/g)) if (!cand.some(x => x.id === +m[1])) cand.push({ id: +m[1], nome: normNome(m[2]) });
+  const direto = cand.find(x => nomes.includes(x.nome)); if (direto) return direto.id;
+  for (const x of cand.slice(0, 3)) { const hp = await pagina(`/manga/${x.id}`); if (nomesPagina(hp).some(n => nomes.includes(n))) return x.id; }
+  return 0;
+}
 const VALE = { anu: 20 * 3600e3, nada: 3 * 864e5, sit: 7 * 864e5 };
 const precisa = (c) => {
   const a = c.anime || null, agora = Date.now();
@@ -76,22 +96,28 @@ const precisa = (c) => {
 (async () => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
-    out.anilist = {};
-    for (const q of ["The Beginning After the End", "One Punch Man"]) {
-      try {
-        const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ query: "query($q:String){Page(perPage:5){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal format countryOfOrigin title{romaji english}}}}", variables: { q } }) });
-        out.anilist[q] = { status: r.status, corpo: (await r.text()).slice(0, 700) };
-      } catch (e) { out.anilist[q] = "falhou: " + e.message; }
+    out.busca = {};
+    for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim", "끝이 아닌 시작"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
+      try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : "não encontrado"; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
     }
-    try { out.mangadex = (await fetch("https://api.mangadex.org/manga?limit=3&title=" + encodeURIComponent("The Beginning After the End"))).status; } catch (e) { out.mangadex = "falhou: " + e.message; }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
     process.exit(0);
   }
   const snap = await db.collection("catalogo").get();
-  const fila = snap.docs.filter(d => { const c = d.data() || {}; const mid = c.malId || (/^mal(\d+)$/.exec(d.id) || [])[1]; return mid && precisa(c); }).slice(0, 25);
+  // primeiro: obras sem o número do MAL (até 10 por rodada; quem não achou tenta de novo depois de 3 dias)
+  let docs = snap.docs;
+  const semId = docs.filter(d => { const c = d.data() || {}; return !c.malId && !/^mal\d+$/.test(d.id) && Date.now() - (c.malBuscaEm || 0) > 3 * 864e5; }).slice(0, 10);
+  for (const d of semId) {
+    try {
+      const id = await acharMalId(d.data() || {});
+      await d.ref.set(id ? { malId: id, malBuscaEm: Date.now() } : { malBuscaEm: Date.now() }, { merge: true });
+      console.log(`${d.id}: MyAnimeList ${id || "não encontrado"}`);
+    } catch (e) { console.log(d.id + " (busca no MAL): " + e.message); }
+  }
+  if (semId.length) docs = (await db.collection("catalogo").get()).docs;
+  const fila = docs.filter(d => { const c = d.data() || {}; const mid = c.malId || (/^mal(\d+)$/.exec(d.id) || [])[1]; return mid && precisa(c); }).slice(0, 25);
   let n = 0;
   for (const d of fila) {
     const c = d.data() || {}, mid = +(c.malId || /^mal(\d+)$/.exec(d.id)[1]);

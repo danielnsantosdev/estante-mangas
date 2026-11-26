@@ -1,10 +1,10 @@
-# De hora em hora: tradução das sinopses novas com o DeepL e conferência do MyAnimeList (anime e situação).
-# As obras novas aparecem primeiro com a tradução rápida do app e, em até 1 hora, ganham a versão do DeepL.
+# A cada 15 minutos: tradução das sinopses novas com o DeepL e conferência do MyAnimeList (anime e situação).
+# As obras novas aparecem primeiro com a tradução rápida do app e, em até 15 minutos, ganham a versão do DeepL.
 name: Tradução
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "*/15 * * * *"
   push:
     branches: [main]
     paths: ["scripts/deepl.js", "scripts/mal.js", ".github/workflows/traducao.yml"]
