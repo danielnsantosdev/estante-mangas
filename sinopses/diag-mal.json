@@ -1,7 +1,14 @@
 {
-  "quando": "2026-11-26T11:59:33.462Z",
+  "quando": "2026-11-26T12:04:02.051Z",
   "busca": {
-    "The Beginning After the End": "não encontrado",
+    "The Beginning After the End": {
+      "malId": 0,
+      "anime": {
+        "st": "dis",
+        "aid": 60146,
+        "porNome": true
+      }
+    },
     "One Punch-Man": {
       "malId": 44347,
       "anime": {
@@ -11,11 +18,10 @@
       "situacao": "Publishing"
     }
   },
-  "nomes": {
-    "The Beginning After the End": [],
-    "Beginning After the End": [],
-    "Kkeut-i Anin Sijak": [],
-    "Kkeuti Aninsijak": []
-  },
+  "situacaoMangaDex": "Finished",
+  "prefixoAnime": [
+    "60146 Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru?",
+    "61831 Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru? Season 2"
+  ],
   "log": []
 }
