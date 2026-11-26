@@ -1,18 +1,15 @@
 {
-  "quando": "2026-11-26T04:30:26.832Z",
-  "onePiece": {
-    "anime": {
-      "st": "dis",
-      "aid": 21
+  "quando": "2026-11-26T11:04:24.781Z",
+  "anilist": {
+    "The Beginning After the End": {
+      "status": 200,
+      "corpo": "{\"data\":{\"Page\":{\"media\":[]}}}"
     },
-    "situacao": "Publishing"
+    "One Punch Man": {
+      "status": 200,
+      "corpo": "{\"data\":{\"Page\":{\"media\":[{\"id\":85364,\"idMal\":null,\"format\":\"MANGA\",\"countryOfOrigin\":\"JP\",\"title\":{\"romaji\":\"One Punch Man\",\"english\":null}},{\"id\":74347,\"idMal\":44347,\"format\":\"MANGA\",\"countryOfOrigin\":\"JP\",\"title\":{\"romaji\":\"One Punch-Man\",\"english\":\"One-Punch Man\"}}]}}}"
+    }
   },
-  "orv": {
-    "anime": {
-      "st": "anu",
-      "aid": 59230
-    },
-    "situacao": "Publishing"
-  },
+  "mangadex": 200,
   "log": []
 }
