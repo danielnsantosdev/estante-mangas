@@ -98,12 +98,10 @@ const precisa = (c) => {
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
     out.busca = {};
     out.pagina = {};
-    for (const u of ["/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent("The Beginning After the End"), "/manga.php?q=" + encodeURIComponent("The Beginning After the End") + "&cat=manga", "/search/all?cat=manga&q=" + encodeURIComponent("The Beginning After the End")]) {
-      try { const h = await pagina(u); out.pagina[u] = { tamanho: h.length, inicio: h.slice(0, 400), links: [...h.matchAll(/manga\\?\/(\d+)\\?\/[^"]{0,60}"[^>]{0,120}>?[\s\S]{0,60}/g)].slice(0, 3).map(m => m[0]) }; } catch (e) { out.pagina[u] = "falhou: " + e.message; }
+    for (const k of ["beginning after", "The Beginning After", "one punch"]) {
+      try { out.pagina["prefix " + k] = (await pagina("/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent(k))).slice(0, 600); } catch (e) { out.pagina[k] = "falhou: " + e.message; }
     }
-    for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim", "끝이 아닌 시작"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
-      try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : "não encontrado"; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
-    }
+    try { const h = await pagina("/search/all?cat=manga&q=" + encodeURIComponent("The Beginning After the End")); const i = h.indexOf("/manga/"); out.pagina.all = [...h.matchAll(/\/manga\/[^"]{0,80}/g)].slice(0, 6).map(m => m[0]); out.pagina.trecho = h.slice(h.indexOf("<body"), h.indexOf("<body") + 100) + " … " + (i >= 0 ? h.slice(i - 200, i + 200) : "sem /manga/"); } catch (e) { out.pagina.all = "falhou: " + e.message; }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
