@@ -36,7 +36,9 @@ async function jikan(path) {
   for (let t = 0; t < 4; t++) {
     const falta = 1200 - (Date.now() - ultima); if (falta > 0) await espera(falta);
     ultima = Date.now();
-    const r = await fetch("https://api.jikan.moe/v4" + path, { headers: { Accept: "application/json" } });
+    let r;
+    try { r = await fetch("https://api.jikan.moe/v4" + path, { headers: { Accept: "application/json", "User-Agent": "EstanteDeMangas/1.0 (github.com/danielnsantosdev/estante-mangas)" } }); }
+    catch (e) { const msg = `Jikan ${path}: ${e.message} ${(e.cause && (e.cause.code || e.cause.message)) || ""}`; logDiag.push(msg); console.log(msg); await espera(4000 * (t + 1)); continue; }
     if (r.ok) return r.json();
     if (r.status === 404) return null;
     const msg = `Jikan ${path}: ${r.status} ${(await r.text()).slice(0, 160)}`; logDiag.push(msg); console.log(msg + " — tentando de novo…"); await espera(3000 * (t + 1));
@@ -71,6 +73,9 @@ const precisa = (c) => {
       out.manga = { status: d.status, relacoes: (d.relations || []).map(x => ({ relation: x.relation, entry: (x.entry || []).slice(0, 4) })) };
       out.resultado = await conferir(13);
     } catch (e) { out.erro = String(e && e.message || e); }
+    for (const u of ["https://api.jikan.moe/v4", "https://myanimelist.net/manga/13", "https://api.myanimelist.net/v2/manga/13"]) {
+      try { const r = await fetch(u); out[u] = r.status; } catch (e) { out[u] = "falhou: " + ((e.cause && (e.cause.code || e.cause.message)) || e.message); }
+    }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out.resultado || out.erro));
