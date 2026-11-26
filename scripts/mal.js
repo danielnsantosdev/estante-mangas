@@ -76,7 +76,15 @@ const precisa = (c) => {
 (async () => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
-    try { out.onePiece = await conferir(13); out.orv = await conferir(132214); } catch (e) { out.erro = String(e && e.message || e); }
+    out.anilist = {};
+    for (const q of ["The Beginning After the End", "One Punch Man"]) {
+      try {
+        const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ query: "query($q:String){Page(perPage:5){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal format countryOfOrigin title{romaji english}}}}", variables: { q } }) });
+        out.anilist[q] = { status: r.status, corpo: (await r.text()).slice(0, 700) };
+      } catch (e) { out.anilist[q] = "falhou: " + e.message; }
+    }
+    try { out.mangadex = (await fetch("https://api.mangadex.org/manga?limit=3&title=" + encodeURIComponent("The Beginning After the End"))).status; } catch (e) { out.mangadex = "falhou: " + e.message; }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
