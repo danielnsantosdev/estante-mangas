@@ -691,101 +691,51 @@ function cardHTML(it) {
     </div>
   </article>`;
 }
-// ---------- anime: a única fonte é o MyAnimeList ----------
-// "Not yet aired" = Anime anunciado; "Currently Airing" ou "Finished Airing" = Anime disponível
-const AVISO_ANIME_KEY = () => "estante-anime-avisos-v2-" + (currentUser ? currentUser.uid : "");
-const ANIME_CACHE_KEY = "estante-anime-mal-v1";
+// ---------- anime e situação: vêm do MyAnimeList pela rotina do GitHub, gravados na ficha da obra ----------
+// anime.st: "anu" (anunciado) | "dis" (disponível) | null; situacao: "Publishing", "Finished"…
+const AVISO_ANIME_KEY = () => "estante-anime-avisos-v3-" + (currentUser ? currentUser.uid : "");
 function lerJSON(k, d) { try { return JSON.parse(localStorage.getItem(k) || "null") || d; } catch (e) { return d; } }
 function salvarJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-let animeCache = lerJSON(ANIME_CACHE_KEY, {});
-const jikanFila = []; let jikanRodando = false;
-function jikan(path, frente) { return new Promise((res, rej) => { const t = { path, res, rej }; if (frente) jikanFila.unshift(t); else jikanFila.push(t); rodarJikan(); }); }
-async function rodarJikan() {   // o Jikan aceita poucas chamadas por minuto: uma de cada vez, com intervalo
-  if (jikanRodando) return; jikanRodando = true;
-  while (jikanFila.length) {
-    const t = jikanFila.shift();
-    try { t.res(await httpJSON("https://api.jikan.moe/v4" + t.path)); } catch (e) { t.rej(e); }
-    await new Promise(r => setTimeout(r, 1100));
-  }
-  jikanRodando = false;
+const catLido = {};
+async function lerCatalogoAtual(key) {   // relê a ficha se a cópia da memória tiver mais de 10 min
+  if (!key) return null;
+  if (catCache[key] && Date.now() - (catLido[key] || 0) < 10 * 60e3) return catCache[key];
+  try { const d = await getDoc(doc(db, "catalogo", key)); catLido[key] = Date.now(); if (d.exists()) return (catCache[key] = d.data()); } catch (e) {}
+  return catCache[key] || null;
 }
-async function malDe(catId) {
-  if (/^mal\d+$/.test(catId || "")) return +catId.slice(3);
-  if (!/^al\d+$/.test(catId || "")) return 0;
-  const c = await lerCatalogo(catId).catch(() => null); return c && c.malId ? +c.malId : 0;
-}
-const ANIME_VALIDADE = { anu: 20 * 3600e3, dis: Infinity, nada: 3 * 864e5 };   // "disponível" não volta atrás: confere uma vez só
-const animePendente = new Map();
-function animeDoMal(mid, frente) {
-  const c = animeCache[mid];
-  if (c && Date.now() - c.em < ANIME_VALIDADE[c.st || "nada"]) return Promise.resolve(c);
-  if (animePendente.has(mid)) {   // já está na fila: se o mangá foi aberto agora, passa na frente
-    if (frente) jikanFila.sort((a, b) => (b.path.includes(`/manga/${mid}/`) ? 1 : 0) - (a.path.includes(`/manga/${mid}/`) ? 1 : 0));
-    return animePendente.get(mid);
-  }
-  const pr = (async () => {
-    const r = await jikan(`/manga/${mid}/full`, frente);
-    guardaSit(mid, r && r.data && r.data.status);
-    const ids = ((r && r.data && r.data.relations) || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
-    let st = null, aid = 0;
-    for (const id of ids.slice(0, 6)) {
-      const a = await jikan(`/anime/${id}`, frente); const sa = a && a.data && a.data.status;
-      if (sa === "Currently Airing" || sa === "Finished Airing") { st = "dis"; aid = id; break; }
-      if (sa === "Not yet aired" && !st) { st = "anu"; aid = id; }
-    }
-    const v = { st, aid, em: Date.now() };
-    animeCache[mid] = v; salvarJSON(ANIME_CACHE_KEY, animeCache);
-    return v;
-  })().finally(() => animePendente.delete(mid));
-  animePendente.set(mid, pr); return pr;
-}
-// situação da obra no MyAnimeList (Finished não volta atrás; as outras conferem de novo a cada 7 dias)
-const SIT_KEY = "estante-situacao-mal-v1";
-let sitCache = lerJSON(SIT_KEY, {});
 const SIT_TXT = { "Publishing": "Lançando", "Finished": "Finalizada", "On Hiatus": "Em hiato", "Discontinued": "Cancelada", "Not yet published": "Em breve" };
-function guardaSit(mid, st) { if (!st) return; sitCache[mid] = { s: st, em: Date.now() }; salvarJSON(SIT_KEY, sitCache); }
-async function situacaoDoMal(mid, frente) {
-  const c = sitCache[mid];
-  if (c && (c.s === "Finished" || c.s === "Discontinued" || Date.now() - c.em < 7 * 864e5)) return c.s;
-  const r = await jikan(`/manga/${mid}`, frente); const st = r && r.data && r.data.status;
-  guardaSit(mid, st); return st;
-}
-async function preencherSit(el, catId) {
-  if (!el) return; el.textContent = "—";
-  const mid = await malDe(catId); if (!mid || !el.isConnected) return;
-  if (sitCache[mid]) el.textContent = SIT_TXT[sitCache[mid].s] || "—";
-  try { const st = await situacaoDoMal(mid, true); if (el.isConnected) el.textContent = SIT_TXT[st] || "—"; } catch (e) {}
-}
 function animeHTML(v) {
   if (!v || !v.st) return "";
   return `<span class="anl"><span class="an ${v.st}">${v.st === "anu" ? "Anime anunciado" : "Anime disponível"}</span><a class="alink" href="https://myanimelist.net/anime/${v.aid}" target="_blank" rel="noopener noreferrer">MyAnimeList ↗</a></span>`;
 }
-async function preencherAnime(el, catId) {   // mostra o que já sabe na hora e confere no MyAnimeList
+async function preencherAnime(el, catId) {
   if (!el) return; el.innerHTML = "";
-  const mid = await malDe(catId); if (!mid || !el.isConnected) return;
-  if (animeCache[mid]) el.innerHTML = animeHTML(animeCache[mid]);
-  try { const v = await animeDoMal(mid, true); if (el.isConnected) el.innerHTML = animeHTML(v); } catch (e) {}
+  const c = await lerCatalogoAtual(catId);
+  if (c && el.isConnected) el.innerHTML = animeHTML(c.anime);
+}
+async function preencherSit(el, catId) {
+  if (!el) return; el.textContent = "—";
+  const c = await lerCatalogoAtual(catId);
+  if (c && el.isConnected) el.textContent = SIT_TXT[c.situacao] || "—";
 }
 let animeConferido = 0;
 async function atualizarAnimes() {   // avisa no sino: mangá da estante ganhou anúncio de anime, e depois quando o anime ficou disponível
-  if (!currentUser || !navigator.onLine || Date.now() - animeConferido < 6 * 3600e3) return;
+  if (!currentUser || !navigator.onLine || Date.now() - animeConferido < 3 * 3600e3) return;
   animeConferido = Date.now();
   const av = lerJSON(AVISO_ANIME_KEY(), {}); av.estado = av.estado || {}; av.lista = av.lista || [];
   const primeira = !av.iniciado;   // na primeira vez só anota a situação, sem encher o sino com anúncios antigos
   let mudou = false;
   for (const it of [...items.values()]) {
     if (!it.catId || !currentUser) continue;
-    try {
-      const mid = await malDe(it.catId); if (!mid) continue;
-      const v = await animeDoMal(mid), antes = av.estado[mid] || null;
-      if (v.st === antes || !v.st) { av.estado[mid] = v.st || antes; continue; }
-      av.estado[mid] = v.st;
-      if (primeira) continue;
-      const texto = v.st === "anu" ? "vai ganhar anime" : antes === "anu" ? "o anime já está disponível" : "";
-      if (!texto) continue;
-      av.lista.unshift({ key: "anime:" + mid + ":" + v.aid + ":" + v.st, mid: it.id, titulo: it.title, texto, em: Date.now() }); mudou = true;
-    } catch (e) { break; }
-    salvarJSON(AVISO_ANIME_KEY(), av);
+    const c = await lerCatalogoAtual(it.catId); const v = c && c.anime;
+    if (!v || !v.st) continue;
+    const antes = av.estado[it.catId] || null;
+    if (v.st === antes) continue;
+    av.estado[it.catId] = v.st;
+    if (primeira) continue;
+    const texto = v.st === "anu" ? "vai ganhar anime" : antes === "anu" ? "o anime já está disponível" : "";
+    if (!texto) continue;
+    av.lista.unshift({ key: "anime:" + it.catId + ":" + v.aid + ":" + v.st, mid: it.id, titulo: it.title, texto, em: Date.now() }); mudou = true;
   }
   av.iniciado = true; av.lista = av.lista.slice(0, 50);
   salvarJSON(AVISO_ANIME_KEY(), av);
