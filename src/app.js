@@ -236,9 +236,9 @@ function startSync(uid) {
   extraUnsubs.push(onSnapshot(doc(db, "users", uid, "config", "forum"), (d) => { forumDnd = !!(d.exists() && (d.data() || {}).dnd); updateBell(); }, () => {}));
   try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
   limparLixeira(uid);
-  carregarAnimes();
   render();
   talvezTutorial(uid);
+  setTimeout(atualizarAnimes, 20000);
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
   }, 8000);
@@ -463,28 +463,15 @@ function limpaSinopse(s) {
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500);
 }
 // ---------- anime: o AniList liga cada mangá às adaptações em anime ----------
-const ANIME_CAMPOS = `relations{edges{relationType node{id idMal type format status title{romaji english} startDate{year month} episodes studios(isMain:true){nodes{name}}}}}`;
-function animeDe(m) {
-  const ns = ((m && m.relations && m.relations.edges) || []).filter(e => e.relationType === "ADAPTATION" && e.node && e.node.type === "ANIME" && e.node.format !== "MUSIC").map(e => e.node);
-  if (!ns.length) return null;
-  const prox = ns.find(n => n.status === "NOT_YET_RELEASED"), exib = ns.find(n => n.status === "RELEASING");
-  const ref = prox || exib || ns.slice().sort((a, b) => ((b.startDate || {}).year || 0) - ((a.startDate || {}).year || 0))[0];
-  const sd = ref.startDate || {};
-  return { st: prox ? "anunciado" : exib ? "exibicao" : "finalizado", id: ref.id, mal: ref.idMal || null,
-    titulo: (ref.title && (ref.title.english || ref.title.romaji)) || "", ano: sd.year || null, mes: sd.month || null,
-    estudio: ((ref.studios && ref.studios.nodes) || []).map(x => x.name).slice(0, 2).join(", "), eps: ref.episodes || null,
-    temporadas: ns.filter(n => ["TV", "TV_SHORT", "ONA"].includes(n.format)).length };
-}
-const tagAnime = (a) => !a ? "" : a.st === "anunciado" ? `<span class="atag novo">Anime anunciado</span>` : `<span class="atag">Tem anime</span>`;
 async function buscaAniList(q) {
-  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year} ${ANIME_CAMPOS}}}}`;
+  const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year}}}}`;
   const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
   return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.format !== "NOVEL").map(m => ({
     key: m.idMal ? "mal" + m.idMal : "al" + m.id, alId: m.id, malId: m.idMal || null,
     original: (m.title.romaji || m.title.english || "").trim(), ingles: (m.title.english || "").trim(),
     capa: (m.coverImage && m.coverImage.large) || "", generos: generosPT(m.genres), desc: m.description || "",
     tipo: TIPO[m.countryOfOrigin] || "Mangá", sinonimos: (m.synonyms || []).filter(x => typeof x === "string"),
-    nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null, anime: animeDe(m),
+    nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null,
   }));
 }
 async function buscaMAL(q) {
@@ -602,7 +589,7 @@ async function completarSinopse(key, c) {
 function montarBuscaCatalogo(root, inicial, aoEscolher) {
   const box = root.querySelector("#catBox");
   box.innerHTML = `
-    <div class="urlrow"><input id="catQ" placeholder="Buscar no catálogo (ex.: Kimetsu, Demon Slayer)" value="${esc(inicial || "")}"><button type="button" class="btn primary" id="catGo">🔎</button></div>
+    <div class="urlrow"><input id="catQ" placeholder="Buscar pelo nome…" value="${esc(inicial || "")}"><button type="button" class="btn primary" id="catGo">Buscar</button></div>
     <div id="catRes" class="catres"></div>`;
   const q = box.querySelector("#catQ"), res = box.querySelector("#catRes");
   const buscar = async () => {
@@ -613,7 +600,7 @@ function montarBuscaCatalogo(root, inicial, aoEscolher) {
     res.innerHTML = lista.length ? lista.map((r, i) => `
       <button type="button" class="catitem" data-i="${i}">
         ${r.capa ? `<img src="${esc(r.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
-        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em>${r.anime ? `<span class="atags">${tagAnime(r.anime)}</span>` : ""}</span>
+        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
       </button>`).join("") + `<div class="hint">Não achou? Preencha manualmente abaixo.</div>`
       : `<div class="hint">Nada encontrado no catálogo. Você pode preencher manualmente abaixo.</div>`;
     res.querySelectorAll("[data-i]").forEach(b => b.onclick = async () => {
@@ -677,7 +664,7 @@ function cardHTML(it) {
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
     : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button>${visit ? "" : seloAnime(it)}</div>
+    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
       <div class="title" title="${esc(it.title)}${it.titulo2 ? " — " + esc(it.titulo2) : ""}"><span class="t1">${esc(it.title)}</span>${it.titulo2 ? `<span class="t2">${esc(it.titulo2)}</span>` : ""}</div>
       ${chap}
@@ -685,60 +672,84 @@ function cardHTML(it) {
     </div>
   </article>`;
 }
-// ---------- anime das obras da estante (confere 1x por dia; novas obras na hora) ----------
-let animeInfo = {}, animeEm = 0, animeT = null;
-const ANIME_KEY = () => "estante-anime-v1-" + (currentUser ? currentUser.uid : "");
-const AVISO_ANIME_KEY = () => "estante-anime-avisos-v1-" + (currentUser ? currentUser.uid : "");
+// ---------- anime: a única fonte é o MyAnimeList ----------
+// "Not yet aired" = Anime anunciado; "Currently Airing" ou "Finished Airing" = Anime disponível
+const AVISO_ANIME_KEY = () => "estante-anime-avisos-v2-" + (currentUser ? currentUser.uid : "");
+const ANIME_CACHE_KEY = "estante-anime-mal-v1";
 function lerJSON(k, d) { try { return JSON.parse(localStorage.getItem(k) || "null") || d; } catch (e) { return d; } }
 function salvarJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-function carregarAnimes() { const c = lerJSON(ANIME_KEY(), {}); animeInfo = c.info || {}; animeEm = c.em || 0; }
-function seloAnime(it) {
-  const a = it.catId && animeInfo[it.catId]; if (!a) return "";
-  const visto = (lerJSON(AVISO_ANIME_KEY(), {}).vistos || {})[it.catId + ":" + a.id];
-  return a.st === "anunciado" && !visto ? `<span class="aselo novo">Anime anunciado</span>` : `<span class="aselo">Anime</span>`;
-}
-function marcarAnimeVisto(it) {
-  const a = it && it.catId && animeInfo[it.catId]; if (!a || a.st !== "anunciado") return;
-  const av = lerJSON(AVISO_ANIME_KEY(), {}); av.vistos = av.vistos || {};
-  if (av.vistos[it.catId + ":" + a.id]) return;
-  av.vistos[it.catId + ":" + a.id] = Date.now(); salvarJSON(AVISO_ANIME_KEY(), av); render();
-}
-function agendaAnimes() { clearTimeout(animeT); animeT = setTimeout(atualizarAnimes, 4000); }
-async function atualizarAnimes() {
-  if (!currentUser || !navigator.onLine) return;
-  const cats = [...new Set([...items.values()].map(it => it.catId).filter(k => /^(al|mal)\d+$/.test(k || "")))];
-  const velho = Date.now() - animeEm > 20 * 3600e3;
-  const faltam = velho ? cats : cats.filter(k => !(k in animeInfo));
-  if (!faltam.length) return;
-  const novo = velho ? {} : { ...animeInfo };
-  for (let i = 0; i < faltam.length; i += 50) {
-    const lote = faltam.slice(i, i + 50), mal = lote.filter(k => k.startsWith("mal")).map(k => +k.slice(3)), al = lote.filter(k => k.startsWith("al")).map(k => +k.slice(2));
-    try {
-      const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ query: `query($m:[Int],$a:[Int]){m:Page(perPage:50){media(idMal_in:$m,type:MANGA){id idMal ${ANIME_CAMPOS}}} a:Page(perPage:50){media(id_in:$a,type:MANGA){id idMal ${ANIME_CAMPOS}}}}`, variables: { m: mal.length ? mal : [0], a: al.length ? al : [0] } }) });
-      lote.forEach(k => { novo[k] = null; });
-      const d = j && j.data;
-      ((d && d.m && d.m.media) || []).forEach(m => { novo["mal" + m.idMal] = animeDe(m); });
-      ((d && d.a && d.a.media) || []).forEach(m => { novo["al" + m.id] = animeDe(m); });
-    } catch (e) { return; }
+let animeCache = lerJSON(ANIME_CACHE_KEY, {});
+const jikanFila = []; let jikanRodando = false;
+function jikan(path) { return new Promise((res, rej) => { jikanFila.push({ path, res, rej }); rodarJikan(); }); }
+async function rodarJikan() {   // o Jikan aceita poucas chamadas por minuto: uma de cada vez, com intervalo
+  if (jikanRodando) return; jikanRodando = true;
+  while (jikanFila.length) {
+    const t = jikanFila.shift();
+    try { t.res(await httpJSON("https://api.jikan.moe/v4" + t.path)); } catch (e) { t.rej(e); }
+    await new Promise(r => setTimeout(r, 1100));
   }
-  animeInfo = novo; animeEm = velho ? Date.now() : animeEm || Date.now();
-  salvarJSON(ANIME_KEY(), { info: animeInfo, em: animeEm });
-  // aviso no sino: uma vez por anime anunciado de cada obra da estante
+  jikanRodando = false;
+}
+async function malDe(catId) {
+  if (/^mal\d+$/.test(catId || "")) return +catId.slice(3);
+  if (!/^al\d+$/.test(catId || "")) return 0;
+  const c = await lerCatalogo(catId).catch(() => null); return c && c.malId ? +c.malId : 0;
+}
+const ANIME_VALIDADE = { anu: 20 * 3600e3, dis: 7 * 864e5, nada: 3 * 864e5 };
+const animePendente = new Map();
+function animeDoMal(mid) {
+  const c = animeCache[mid];
+  if (c && Date.now() - c.em < ANIME_VALIDADE[c.st || "nada"]) return Promise.resolve(c);
+  if (animePendente.has(mid)) return animePendente.get(mid);
+  const pr = (async () => {
+    const r = await jikan(`/manga/${mid}/relations`);
+    const ids = ((r && r.data) || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
+    let st = null, aid = 0;
+    for (const id of ids.slice(0, 6)) {
+      const a = await jikan(`/anime/${id}`); const sa = a && a.data && a.data.status;
+      if (sa === "Currently Airing" || sa === "Finished Airing") { st = "dis"; aid = id; break; }
+      if (sa === "Not yet aired" && !st) { st = "anu"; aid = id; }
+    }
+    const v = { st, aid, em: Date.now() };
+    animeCache[mid] = v; salvarJSON(ANIME_CACHE_KEY, animeCache);
+    return v;
+  })().finally(() => animePendente.delete(mid));
+  animePendente.set(mid, pr); return pr;
+}
+function animeHTML(v) {
+  if (!v || !v.st) return "";
+  return `<span class="anl"><span class="an ${v.st}">${v.st === "anu" ? "Anime anunciado" : "Anime disponível"}</span><a class="alink" href="https://myanimelist.net/anime/${v.aid}" target="_blank" rel="noopener noreferrer">MyAnimeList ↗</a></span>`;
+}
+async function preencherAnime(el, catId) {   // mostra o que já sabe na hora e confere no MyAnimeList
+  if (!el) return; el.innerHTML = "";
+  const mid = await malDe(catId); if (!mid || !el.isConnected) return;
+  if (animeCache[mid]) el.innerHTML = animeHTML(animeCache[mid]);
+  try { const v = await animeDoMal(mid); if (el.isConnected) el.innerHTML = animeHTML(v); } catch (e) {}
+}
+let animeConferido = 0;
+async function atualizarAnimes() {   // 1x por sessão: avisa no sino quando um mangá da estante ganha anúncio de anime
+  if (!currentUser || !navigator.onLine || Date.now() - animeConferido < 6 * 3600e3) return;
+  animeConferido = Date.now();
   const av = lerJSON(AVISO_ANIME_KEY(), {}); av.avisados = av.avisados || {}; av.lista = av.lista || [];
+  const primeira = !av.iniciado;   // na primeira vez não enche o sino com anúncios antigos
   let mudou = false;
-  for (const it of items.values()) {
-    const a = it.catId && animeInfo[it.catId]; if (!a || a.st !== "anunciado") continue;
-    const k = it.catId + ":" + a.id; if (av.avisados[k]) continue;
-    av.avisados[k] = Date.now(); av.lista.unshift({ key: "anime:" + k, mid: it.id, titulo: it.title, em: Date.now() }); mudou = true;
+  for (const it of [...items.values()]) {
+    if (!it.catId || !currentUser) continue;
+    try {
+      const mid = await malDe(it.catId); if (!mid) continue;
+      const v = await animeDoMal(mid);
+      if (v.st !== "anu") continue;
+      const k = mid + ":" + v.aid; if (av.avisados[k]) continue;
+      av.avisados[k] = Date.now();
+      if (!primeira) { av.lista.unshift({ key: "anime:" + k, mid: it.id, titulo: it.title, em: Date.now() }); mudou = true; }
+    } catch (e) { break; }
   }
-  av.lista = av.lista.slice(0, 50);
+  av.iniciado = true; av.lista = av.lista.slice(0, 50);
   salvarJSON(AVISO_ANIME_KEY(), av);
-  render(); if (mudou) updateBell();
+  if (mudou) updateBell();
 }
 function render() {
   if (!currentUser) return;
-  if (!ui.visit) agendaAnimes();
   renderChips();
   $("#visitBar").classList.toggle("hidden", !ui.visit);
   if (ui.visit) { $("#visitName").textContent = "@" + ui.visit.apelido; $("#visitAv").innerHTML = avatarHTML(ui.visit.foto, ui.visit.apelido); }
@@ -830,94 +841,159 @@ async function imageToCover(blob) {
   } finally { URL.revokeObjectURL(url); }
 }
 
+// ---------- editar / cadastrar mangá: modo ficha (tudo numa tela) ou modo abas (Leitura · Obra · Capa) ----------
+const ED_MODO_KEY = "estante-editor-modo";
+const ED_ICO = {
+  ficha: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
+  abas: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 9h18v11H3z"/><path d="M3 9V5h6v4M9 5h6v4"/></svg>`,
+};
 function openEditor(id) {
   const it = id ? items.get(id) : null;
   let cover = it ? it.cover || "" : "";
   let catId = it ? it.catId || "" : "", titulo2 = it ? it.titulo2 || "" : "", alias = it ? it.alias || "" : "", catNome = "", catSel = null;
-  let confirmDel = false;
-  const opts = Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(it ? stOf(it) : "lendo") === k ? "selected" : ""}>${v.label}</option>`).join("");
+  let confirmDel = false, modo = "ficha", aba = 0, lixeiraCache = null;
+  try { modo = localStorage.getItem(ED_MODO_KEY) === "abas" ? "abas" : "ficha"; } catch (e) {}
+  const stIni = it ? stOf(it) : "lendo", notaIni = it ? parseNota(it.nota) : 0;
+  const notaTxt = (n) => n ? fmtNota(n) : "Sem nota";
   openModal(`
-    <form id="ed" autocomplete="off">
-      <div class="mhead"><h2>${it ? "Editar mangá" : "Novo mangá"}</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <form id="ed" class="ed" autocomplete="off" novalidate>
+      <div class="mhead"><h2>${it ? "Editar mangá" : "Novo mangá"}</h2><button type="button" class="edmodo" id="edModo"></button><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="edabas">${["Leitura", "Obra", "Capa"].map((a, i) => `<button type="button" data-aba="${i}">${a}</button>`).join("")}</div>
       <div class="mbody">
-        <div class="sect catsect">
-          <div class="secth">📚 Catálogo <span id="catStatus">${catId ? "vinculado ✓" : ""}</span></div>
-          <div id="catPick"></div>
-          <div id="catBox">${it ? `<button type="button" class="btn" id="catLink">🔗 ${catId ? "Trocar vínculo do catálogo" : "Vincular ao catálogo"}</button>` : ""}</div>
+        <div class="edsec" data-sec="0">
+          ${it ? "" : `<div class="ecol"><span class="elbl">Catálogo</span><div id="catBox"></div></div>`}
+          <div class="ehero"><div class="cprev" id="cprev"></div><div class="tx"><h4 id="hNome"></h4><small id="hGen"></small><div id="hAnime"></div></div></div>
+          <div id="dupBox"></div>
+          <div class="edcampos">
+            <div class="esep"></div>
+            <div class="egrid">
+              <div class="ecol"><span class="elbl">Capítulo</span><div class="estep"><button type="button" data-cap="-1" aria-label="Menos um">−</button><input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"><button type="button" data-cap="1" aria-label="Mais um">+</button></div></div>
+              <div class="ecol"><span class="elbl">Nota</span><label class="ednota"><span id="notaTxt" class="${notaIni ? "" : "vazia"}">${notaTxt(notaIni)}</span> ▾<select name="nota" aria-label="Nota"><option value="">Sem nota</option>${NOTAS.map(n => `<option value="${n}" ${notaIni === n ? "selected" : ""}>${fmtNota(n)}</option>`).join("")}</select></label></div>
+            </div>
+            <div class="ecol"><span class="elbl">Status</span><div class="edst">${Object.entries(STATUS).map(([k, v]) => `<button type="button" class="s-${k} ${k === stIni ? "on" : ""}" data-st="${k}"><i></i>${v.label}</button>`).join("")}</div></div>
+            <label class="etg"><span class="t"><b>Privado</b><small>Só você vê este mangá</small></span><input type="checkbox" id="edPriv" ${it && it.privado ? "checked" : ""}><span class="esw"></span></label>
+            <div class="hint" id="edPrivDica">${it && bloqueioPublico(it) ? esc(MSG_BLOQ[bloqueioPublico(it)]) : ""}</div>
+            <label class="ecol"><span class="elbl">Comentário · aparece no seu perfil</span><textarea name="comentario" class="einp" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
+          </div>
         </div>
-        <label class="f">Nome<input name="title" required maxlength="120" placeholder="Ex.: One Piece" value="${esc(it ? it.title : "")}"><small class="nomecat" id="nomeCat"></small></label>
-        <div class="two">
-          <label class="f">Último capítulo lido<input name="chapter" inputmode="decimal" placeholder="0" value="${it ? fmtCap(it.chapter) : ""}"></label>
-          <label class="f">Status<select name="status">${opts}</select></label>
-        </div>
-        <label class="f">Link do site onde você lê <span style="font-weight:500;color:var(--muted)">(opcional)</span><input name="link" inputmode="url" placeholder="https://…" value="${esc(it ? it.link || "" : "")}"></label>
-        <div class="two">
-          <label class="f">Sua nota <span style="font-weight:500;color:var(--muted)">(opcional)</span><select name="nota"><option value="">Sem nota</option>${NOTAS.map(n => `<option value="${n}" ${it && parseNota(it.nota) === n ? "selected" : ""}>⭐ ${fmtNota(n)}</option>`).join("")}</select></label>
-          <span></span>
-        </div>
-        <label class="chk"><input type="checkbox" id="edPriv" ${it && it.privado ? "checked" : ""}> <span>${icoVis(true)} Privado: só eu vejo este mangá</span></label>
-        <div class="hint" id="edPrivDica" style="margin-top:-8px">${it && bloqueioPublico(it) ? esc(MSG_BLOQ[bloqueioPublico(it)]) : ""}</div>
-        <label class="f">Comentário <span style="font-weight:500;color:var(--muted)">(opcional · aparece no seu perfil público)</span><textarea name="comentario" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
-        <div>
-          <div style="font-size:13px;font-weight:700;margin-bottom:6px">Capa <span style="font-weight:500;color:var(--muted)">(opcional)</span></div>
-          <div class="cover-edit">
-            <div class="cprev" id="cprev"></div>
-            <div class="cbtns">
-              <button type="button" class="btn" id="pick">🖼️ Foto da galeria / arquivo</button>
-              <button type="button" class="btn" id="imgBusca">🔎 Buscar imagem (catálogo e internet)</button>
-              <div class="urlrow">
-                <input id="imgUrl" inputmode="url" placeholder="ou cole o link da imagem">
-                <button type="button" class="btn" id="useUrl">OK</button>
+        <div class="emais ${it ? "" : "aberto cad"}" id="edMais">
+          <button type="button" class="emh" id="edMaisBtn"><b>Mais opções</b><span class="seta">▾</span></button>
+          <div class="emc">
+            <div class="edsec" data-sec="1">
+              <div class="egrid">
+                <label class="ecol"><span class="elbl">Nome que aparece no card</span><input name="title" class="einp" maxlength="120" placeholder="Ex.: One Piece" value="${esc(it ? it.title : "")}"><small class="nomecat" id="nomeCat"></small></label>
+                <label class="ecol"><span class="elbl">Link do site onde você lê</span><input name="link" class="einp" inputmode="url" placeholder="https://…" value="${esc(it ? it.link || "" : "")}"></label>
               </div>
-              <div class="paste" id="paste" contenteditable="true" spellcheck="false" data-ph="1">Ou cole aqui uma imagem copiada (Ctrl+V)</div>
-              <button type="button" class="btn ghost" id="rmCover">Remover capa</button>
+              ${it ? `<div class="ecol"><span class="elbl">Catálogo</span><div id="catPick"></div><div id="catBox"><button type="button" class="btn" id="catLink">${catId ? "Trocar vínculo do catálogo" : "Vincular ao catálogo"}</button></div></div>` : `<div id="catPick"></div>`}
+            </div>
+            <div class="edsec" data-sec="2">
+              <div class="ecol"><span class="elbl">Capa</span>
+                <div class="ecapa"><div class="cprev" id="cprev2"></div>
+                  <div class="ecbtns"><button type="button" class="btn" id="pick">Galeria</button><button type="button" class="btn" id="imgBusca">Buscar imagem</button><button type="button" class="btn" id="colarLink">Colar link</button><button type="button" class="btn lnk" id="rmCover">Remover capa</button></div>
+                </div>
+                <div class="urlrow hidden" id="urlRow"><input id="imgUrl" inputmode="url" placeholder="Cole o link da imagem"><button type="button" class="btn" id="useUrl">OK</button></div>
+                <div id="imgPainel"></div>
+              </div>
             </div>
           </div>
-          <div id="imgPainel"></div>
         </div>
       </div>
       <div class="mfoot">
-        ${it ? `<button type="button" class="btn danger" id="del">Excluir</button>` : ""}
+        ${it ? `<button type="button" class="btn lnk" id="del">Excluir</button>` : ""}
         <span class="grow"></span>
         <button type="button" class="btn ghost" data-x>Cancelar</button>
-        <button type="submit" class="btn primary">Salvar</button>
+        <button type="submit" class="btn primary" id="edOk">${it ? "Salvar" : "Adicionar"}</button>
       </div>
     </form>`, (root) => {
-    const prev = root.querySelector("#cprev");
-    const titleInput = root.querySelector("[name=title]");
+    const form = root.querySelector("#ed");
+    const titleInput = root.querySelector("[name=title]"), chInput = root.querySelector("[name=chapter]");
+    const prevs = [root.querySelector("#cprev"), root.querySelector("#cprev2")];
+    let status = stIni;
+    // ----- modo ficha / abas -----
+    const aplicarModo = () => {
+      form.classList.toggle("modo-abas", modo === "abas"); form.classList.toggle("modo-ficha", modo === "ficha");
+      form.dataset.aba = String(aba);
+      root.querySelector("#edModo").innerHTML = `${ED_ICO[modo]}${modo === "ficha" ? "Modo ficha" : "Modo abas"}`;
+      root.querySelectorAll("[data-aba]").forEach(b => b.classList.toggle("on", +b.dataset.aba === aba));
+    };
+    root.querySelector("#edModo").onclick = () => { modo = modo === "ficha" ? "abas" : "ficha"; aba = 0; try { localStorage.setItem(ED_MODO_KEY, modo); } catch (e) {} aplicarModo(); };
+    root.querySelectorAll(".edabas [data-aba]").forEach(b => b.onclick = () => { aba = +b.dataset.aba; aplicarModo(); });
+    root.querySelector("#edMaisBtn").onclick = () => root.querySelector("#edMais").classList.toggle("aberto");
+    aplicarModo();
+    // ----- topo: capa, nome, gêneros e anime -----
+    const hNome = root.querySelector("#hNome"), hGen = root.querySelector("#hGen"), hAnime = root.querySelector("#hAnime");
+    const pintaTopo = () => { hNome.textContent = titleInput.value.trim() || (it ? it.title : "Escolha no catálogo ou escreva o nome"); hNome.classList.toggle("vazio", !titleInput.value.trim()); };
+    const pintaGeneros = (c) => { hGen.textContent = c && (c.generos || []).length ? c.generos.slice(0, 4).join(" · ") : ""; };
+    pintaTopo();
+    titleInput.addEventListener("input", () => { pintaTopo(); if (!cover) paintCover(); });
+    // ----- capítulo, nota e status -----
+    root.querySelectorAll("[data-cap]").forEach(b => b.onclick = () => { chInput.value = fmtCap(Math.max(0, Math.floor(parseCap(chInput.value)) + Number(b.dataset.cap))); });
+    const notaSel = root.querySelector("[name=nota]"), notaSp = root.querySelector("#notaTxt");
+    notaSel.onchange = () => { const n = parseNota(notaSel.value); notaSp.textContent = notaTxt(n); notaSp.classList.toggle("vazia", !n); };
+    root.querySelectorAll("[data-st]").forEach(b => b.onclick = () => {
+      status = b.dataset.st; root.querySelectorAll("[data-st]").forEach(x => x.classList.toggle("on", x === b));
+      if (!it && status === "fila") chInput.value = "0";   // cadastrou como Na fila: começa do zero
+    });
+    // ----- catálogo -----
     const pick = root.querySelector("#catPick");
     const mostrarEscolha = (c) => {
-      pick.innerHTML = c ? `<div class="catchosen">${c.capa ? `<img src="${esc(c.capa)}" alt="" referrerpolicy="no-referrer">` : ""}<div><b>${esc(c.titulo)}</b>${c.titulo2 ? `<small>${esc(c.titulo2)}</small>` : ""}<em>${esc(c.tipo || "")}${(c.generos || []).length ? " · " + esc(c.generos.slice(0, 4).join(", ")) : ""}</em></div><button type="button" class="mini" id="catUnlink" title="Desvincular">✕</button></div>` : "";
-      const un = pick.querySelector("#catUnlink"); if (un) un.onclick = () => { catId = ""; titulo2 = ""; alias = ""; catNome = ""; mostrarEscolha(null); root.querySelector("#catStatus").textContent = ""; dicaNome(); };
-      if (c) { catSel = c; catNome = nomePopular(c); dicaNome(); }
+      pick.innerHTML = c ? `<div class="catchosen">${c.capa ? `<img src="${esc(c.capa)}" alt="" referrerpolicy="no-referrer">` : ""}<div><b>${esc(c.titulo)}</b>${c.titulo2 ? `<small>${esc(c.titulo2)}</small>` : ""}<em>${esc(c.tipo || "")}</em></div><button type="button" class="mini" id="catUnlink" title="Desvincular">✕</button></div>` : "";
+      const un = pick.querySelector("#catUnlink"); if (un) un.onclick = () => { catId = ""; titulo2 = ""; alias = ""; catNome = ""; catSel = null; mostrarEscolha(null); pintaGeneros(null); hAnime.innerHTML = ""; dicaNome(); };
+      if (c) { catSel = c; catNome = nomePopular(c); pintaGeneros(c); dicaNome(); }
     };
     const dica = root.querySelector("#nomeCat");
     const dicaNome = () => {
-      if (!catId || !catNome) { dica.innerHTML = ""; return; }
-      dica.innerHTML = norm(titleInput.value) === norm(catNome) ? `Nome do catálogo. Você pode trocar à vontade: o vínculo continua.`
-        : `Nome no catálogo: <b>${esc(catNome)}</b> · <button type="button" class="linkbtn" id="usarCat">Usar nome do catálogo</button>`;
-      const u = dica.querySelector("#usarCat"); if (u) u.onclick = () => { titleInput.value = catNome; dicaNome(); };
+      if (!catId || !catNome || norm(titleInput.value) === norm(catNome)) { dica.innerHTML = ""; return; }
+      dica.innerHTML = `Nome no catálogo: <b>${esc(catNome)}</b> · <button type="button" class="linkbtn" id="usarCat">Usar este</button>`;
+      const u = dica.querySelector("#usarCat"); if (u) u.onclick = () => { titleInput.value = catNome; pintaTopo(); dicaNome(); };
     };
     titleInput.addEventListener("input", dicaNome);
-    const aoEscolher = (key, c) => {
-      catId = key; catNome = nomePopular(c); titulo2 = nomeSecundario(c, catNome); alias = aliasDe(c);
-      titleInput.value = catNome; mostrarEscolha(c);
-      if (idadeDe(c) === "18+") { root.querySelector("#edPriv").checked = true; root.querySelector("#edPrivDica").textContent = "Obra 18+: sugerimos deixar privada. Desmarque se quiser mostrar na sua estante pública."; }
-      root.querySelector("#catStatus").textContent = "vinculado ✓";
-      if (!cover && c.capa) { cover = c.capa; paintCover(); }
+    // mangá repetido: já está na estante ou na lixeira
+    const dupBox = root.querySelector("#dupBox");
+    const limparDup = () => { dupBox.innerHTML = ""; form.classList.remove("dup"); };
+    const mostrarDup = (tipo, x) => {
+      form.classList.add("dup");
+      dupBox.innerHTML = `<div class="edaviso"><span class="ic">${tipo === "est" ? "✓" : "↺"}</span><span class="tx"><b>${tipo === "est" ? "Este mangá já está na sua estante" : "Este mangá está na sua lixeira"}</b><small>${tipo === "est" ? `Capítulo ${fmtCap(x.chapter)} · ${STATUS[stOf(x)].label}` : "Volta com capítulo, nota e comentário"}</small></span></div>
+        <div class="edavbtns"><button type="button" class="btn" id="dupOutro">Escolher outro</button><button type="button" class="btn primary" id="dupOk">${tipo === "est" ? "Abrir" : "Restaurar"}</button></div>`;
+      dupBox.querySelector("#dupOutro").onclick = () => { limparDup(); catId = ""; catSel = null; titleInput.value = ""; cover = ""; paintCover(); pintaTopo(); pintaGeneros(null); hAnime.innerHTML = ""; mostrarEscolha(null); const q = root.querySelector("#catQ"); if (q) { q.value = ""; q.focus(); } };
+      dupBox.querySelector("#dupOk").onclick = async () => {
+        if (tipo === "est") { closeModal(); openEditor(x.id); return; }
+        const ok = await restaurarDaLixeira(x); if (ok) closeModal();
+      };
     };
-    if (catId) lerCatalogo(catId).then(c => c && mostrarEscolha(c));
-    if (!it) montarBuscaCatalogo(root, "", aoEscolher);
+    const lerLixeira = async () => {
+      if (lixeiraCache) return lixeiraCache;
+      try { lixeiraCache = (await getDocs(collection(db, "users", currentUser.uid, "lixeira"))).docs.map(d => ({ id: d.id, ...d.data() })); } catch (e) { lixeiraCache = []; }
+      return lixeiraCache;
+    };
+    const aoEscolher = async (key, c) => {
+      limparDup();
+      catId = key; catNome = nomePopular(c); titulo2 = nomeSecundario(c, catNome); alias = aliasDe(c);
+      titleInput.value = catNome; mostrarEscolha(c); pintaTopo();
+      if (idadeDe(c) === "18+") { root.querySelector("#edPriv").checked = true; root.querySelector("#edPrivDica").textContent = "Obra 18+: sugerimos deixar privada. Desmarque se quiser mostrar na sua estante pública."; }
+      if (c.capa && (!cover || !it)) { cover = c.capa; paintCover(); }
+      preencherAnime(hAnime, key);
+      if (!it) {
+        const naEst = [...items.values()].find(x => x.catId === key);
+        if (naEst) { mostrarDup("est", naEst); return; }
+        const naLix = (await lerLixeira()).find(x => x.catId === key);
+        if (naLix && catId === key) mostrarDup("lix", naLix);
+      }
+    };
+    if (catId) { lerCatalogo(catId).then(c => c && mostrarEscolha(c)); preencherAnime(hAnime, catId); }
+    if (!it) { montarBuscaCatalogo(root, "", aoEscolher); lerLixeira(); }
     const cl = root.querySelector("#catLink"); if (cl) cl.onclick = () => montarBuscaCatalogo(root, it.title, aoEscolher);
+    // ----- capa -----
     const paintCover = () => {
-      prev.innerHTML = cover ? `<img src="${esc(cover)}" alt="" referrerpolicy="no-referrer">` : phHTML(titleInput.value || "?", 34);
-      const im = prev.querySelector("img");
-      if (im) im.onerror = () => { toast("Essa imagem não abriu. Tente outro link ou use uma foto do aparelho.", 4000); cover = ""; paintCover(); };
+      prevs.forEach(prev => {
+        prev.innerHTML = cover ? `<img src="${esc(cover)}" alt="" referrerpolicy="no-referrer">` : phHTML(titleInput.value || "?", 30);
+        const im = prev.querySelector("img");
+        if (im) im.onerror = () => { if (prev.id !== "cprev") return; toast("Essa imagem não abriu. Tente outro link ou use uma foto do aparelho.", 4000); cover = ""; paintCover(); };
+      });
       root.querySelector("#rmCover").style.display = cover ? "" : "none";
       if (cover && (!it || cover !== it.cover)) carregarVerificador().catch(() => {});   // já vai preparando a verificação
     };
     paintCover();
-    titleInput.addEventListener("input", () => { if (!cover) paintCover(); });
     const useBlob = async (blob) => {
       try { cover = await imageToCover(blob); paintCover(); toast("Capa adicionada!"); }
       catch (e) { toast("Não consegui ler essa imagem."); }
@@ -926,10 +1002,11 @@ function openEditor(id) {
       const u = fixLink(root.querySelector("#imgUrl").value);
       if (!u) { toast("Cole um link de imagem válido."); return; }
       if (u.length > 2000) { toast("Link longo demais."); return; }
-      cover = u; paintCover(); root.querySelector("#imgUrl").value = "";
+      cover = u; paintCover(); root.querySelector("#imgUrl").value = ""; root.querySelector("#urlRow").classList.add("hidden");
     };
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelector("#pick").onclick = () => { const f = $("#file"); f.value = ""; f.onchange = () => f.files[0] && useBlob(f.files[0]); f.click(); };
+    root.querySelector("#colarLink").onclick = () => { const r = root.querySelector("#urlRow"); r.classList.toggle("hidden"); if (!r.classList.contains("hidden")) root.querySelector("#imgUrl").focus(); };
     root.querySelector("#useUrl").onclick = useUrl;
     root.querySelector("#imgBusca").onclick = () => {
       const pn = root.querySelector("#imgPainel");
@@ -939,7 +1016,7 @@ function openEditor(id) {
       const q = pn.querySelector("#ibQ"), res = pn.querySelector("#ibRes");
       const go = async () => {
         const t = q.value.trim(); if (!t) { q.focus(); return; }
-        if (!navigator.onLine) { res.innerHTML = `<p class="hint">📴 Sem internet.</p>`; return; }
+        if (!navigator.onLine) { res.innerHTML = `<p class="hint">Sem internet.</p>`; return; }
         res.innerHTML = `<p class="hint">Buscando…</p>`;
         try {
           const l = await buscaImagens(t, "capa");
@@ -954,46 +1031,45 @@ function openEditor(id) {
     };
     root.querySelector("#imgUrl").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); useUrl(); } });
     root.querySelector("#rmCover").onclick = () => { cover = ""; paintCover(); };
-    const pz = root.querySelector("#paste");
-    pz.addEventListener("focus", () => { if (pz.dataset.ph) { pz.textContent = ""; delete pz.dataset.ph; } });
-    pz.addEventListener("input", () => { pz.textContent = ""; });
-    const onPaste = (e) => {
+    const onPaste = (e) => {   // Ctrl+V de uma imagem em qualquer lugar da janela vira capa
       const dt = e.clipboardData; if (!dt) return;
       const img = [...dt.items].find(i => i.type && i.type.startsWith("image/"));
-      if (img) { e.preventDefault(); useBlob(img.getAsFile()); return; }
-      if (e.target === pz) {
-        e.preventDefault();
-        const txt = (dt.getData("text") || "").trim();
-        if (/^https?:\/\//i.test(txt)) { cover = txt; paintCover(); }
-      }
+      if (img) { e.preventDefault(); useBlob(img.getAsFile()); }
     };
     document.addEventListener("paste", onPaste);
-    prev.addEventListener("dragover", (e) => { e.preventDefault(); prev.classList.add("drag"); });
-    prev.addEventListener("dragleave", () => prev.classList.remove("drag"));
-    prev.addEventListener("drop", (e) => { e.preventDefault(); prev.classList.remove("drag"); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith("image/")) useBlob(f); });
+    prevs.forEach(prev => {
+      prev.addEventListener("dragover", (e) => { e.preventDefault(); prev.classList.add("drag"); });
+      prev.addEventListener("dragleave", () => prev.classList.remove("drag"));
+      prev.addEventListener("drop", (e) => { e.preventDefault(); prev.classList.remove("drag"); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith("image/")) useBlob(f); });
+    });
     const del = root.querySelector("#del");
     if (del) del.onclick = () => {
-      if (!confirmDel) { confirmDel = true; del.textContent = "Confirmar exclusão?"; del.style.background = "var(--red)"; del.style.color = "#fff"; return; }
+      if (!confirmDel) { confirmDel = true; del.textContent = "Confirmar exclusão?"; del.classList.add("conf"); return; }
       remove(id); closeModal(); toast("Movido para a lixeira (fica lá por 30 dias).", 3500);
     };
+    // ----- salvar -----
     let verificando = false;
-    root.querySelector("#ed").addEventListener("submit", async (e) => {
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (verificando) return;
-      const fd = new FormData(e.target);
+      if (verificando || form.classList.contains("dup")) return;
+      const fd = new FormData(form);
       const title = String(fd.get("title") || "").trim();
-      if (!title) return;
+      if (!title) {
+        toast(it ? "Escreva o nome do mangá." : "Escolha no catálogo ou escreva o nome do mangá.", 3500);
+        if (modo === "abas") { aba = 1; aplicarModo(); } else root.querySelector("#edMais").classList.add("aberto");
+        titleInput.focus(); return;
+      }
       const chapter = parseCap(fd.get("chapter"));
       const rawLink = String(fd.get("link") || "").trim();
       const link = fixLink(rawLink);
       if (rawLink && !link) { toast("Esse link não parece válido."); return; }
       if (catId && catSel) titulo2 = nomeSecundario(catSel, title);   // nome próprio: embaixo fica o nome conhecido do catálogo
-      const data = { title, chapter, status: String(fd.get("status")), link, cover, catId, titulo2: catId ? titulo2 : "", alias: catId ? alias : "",
+      const data = { title, chapter, status, link, cover, catId, titulo2: catId ? titulo2 : "", alias: catId ? alias : "",
         nota: parseNota(fd.get("nota")), comentario: String(fd.get("comentario") || "").trim().slice(0, 300) };
       // capa nova? confere se tem conteúdo adulto (no próprio aparelho)
       let capa18 = !!(it && it.capa18 && cover === it.cover);
       if (cover && (!it || cover !== it.cover)) {
-        const sb = root.querySelector('#ed [type="submit"]'), txt = sb.textContent;
+        const sb = root.querySelector("#edOk"), txt = sb.textContent;
         verificando = true; sb.disabled = true; sb.textContent = "Verificando a capa…";
         capa18 = (await verificarImagem(cover)) === "adulto";
         verificando = false; sb.disabled = false; sb.textContent = txt;
@@ -1020,7 +1096,7 @@ function openEditor(id) {
       }
       closeModal();
     });
-    if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); (q || titleInput).focus(); }, 50);
+    if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); if (q) q.focus(); }, 50);
     return () => document.removeEventListener("paste", onPaste);
   });
 }
@@ -1291,20 +1367,46 @@ async function limparLixeira(uid) {
     }
   } catch (e) {}
 }
+async function restaurarDaLixeira(x) {
+  try {
+    const m = { ...x }; delete m.id; delete m.excluidoEm;
+    const bt = writeBatch(db); bt.set(doc(m.privado ? colPriv : col, x.id), clean(m)); bt.delete(doc(db, "users", currentUser.uid, "lixeira", x.id)); await bt.commit();
+    toast("Restaurado na estante!"); return true;
+  } catch (e) { toast("Não foi possível agora. Verifique a internet."); return false; }
+}
+const ICO_LIXO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/></svg>`;
 async function openLixeira() {
   const uid = currentUser.uid;
   openModal(`
-    <div class="mhead"><h2>🗑️ Lixeira</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody"><p class="hint">Mangás excluídos ficam aqui por ${LIX_DIAS} dias e depois somem de vez.</p><div id="lxl" class="menu-list"><div class="hint">Carregando…</div></div></div>`, async (root) => {
+    <div class="mhead"><h2>Lixeira</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody"><p class="hint">Mangás excluídos ficam aqui por ${LIX_DIAS} dias e depois somem sozinhos.</p><div id="lxTopo"></div><div id="lxl" class="lxlist"><div class="hint">Carregando…</div></div></div>`, async (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
-    const box = root.querySelector("#lxl");
-    let lista = [];
+    const box = root.querySelector("#lxl"), topo = root.querySelector("#lxTopo");
+    let lista = [], conf = null, esv = false;
     const draw = () => {
+      topo.innerHTML = lista.length ? `<div class="lxtopo"><b>Na lixeira</b><span class="qt">${lista.length}</span><button type="button" class="nlimpar ${esv ? "conf" : ""}" id="lxEsv">${esv ? "Apagar todos de vez?" : "Esvaziar lixeira"}</button></div>` : "";
       box.innerHTML = lista.length ? lista.map(x => {
-        const dias = Math.max(0, LIX_DIAS - Math.floor((Date.now() - (x.excluidoEm || 0)) / 86400000));
-        return `<div class="acct" style="justify-content:space-between" data-id="${esc(x.id)}"><div><b>${esc(x.title)}</b><small>some em ${dias} ${dias === 1 ? "dia" : "dias"}</small></div>
-          <div style="display:flex;gap:6px;flex:none"><button class="mini read" data-l="rest">Restaurar</button><button class="mini" data-l="del" style="color:var(--red)">✕</button></div></div>`;
-      }).join("") : `<div class="hint">A lixeira está vazia.</div>`;
+        const dias = Math.max(0, LIX_DIAS - Math.floor((Date.now() - (x.excluidoEm || 0)) / 86400000)), capa = safeCover(x.cover);
+        return `<div class="lxi" data-id="${esc(x.id)}">
+          <span class="ncapa">${capa ? `<img src="${esc(capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : esc((x.title || "?").trim().charAt(0).toUpperCase())}</span>
+          <span class="nt"><b>${esc(x.title)}</b><small>Some sozinho em ${dias} ${dias === 1 ? "dia" : "dias"}</small></span>
+          ${conf === x.id ? `<span class="lxconf"><button type="button" class="btn" data-l="nao">Não</button><button type="button" class="btn lxdel" data-l="sim">Apagar de vez</button></span>`
+            : `<button type="button" class="mini read" data-l="rest">Restaurar</button><button type="button" class="lxlix" data-l="del" title="Apagar de vez" aria-label="Apagar de vez">${ICO_LIXO}</button>`}
+        </div>`;
+      }).join("") : `<div class="nvazio">A lixeira está vazia.</div>`;
+      const ev = topo.querySelector("#lxEsv");
+      if (ev) ev.onclick = async () => {
+        if (!esv) { esv = true; conf = null; draw(); return; }
+        ev.disabled = true;
+        try {
+          for (let i = 0; i < lista.length; i += 200) {
+            const bt = writeBatch(db);
+            lista.slice(i, i + 200).forEach(x => { bt.delete(doc(db, "users", uid, "lixeira", x.id)); bt.delete(doc(db, "users", uid, "avaliacoes", x.id)); });
+            await bt.commit();
+          }
+          lista = []; esv = false; toast("Lixeira vazia."); draw();
+        } catch (e) { ev.disabled = false; toast("Não foi possível agora. Verifique a internet."); }
+      };
     };
     try { lista = (await getDocs(collection(db, "users", uid, "lixeira"))).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.excluidoEm || 0) - (a.excluidoEm || 0)); }
     catch (e) { box.innerHTML = `<div class="err">Não consegui abrir a lixeira agora.</div>`; return; }
@@ -1312,18 +1414,16 @@ async function openLixeira() {
     box.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-l]"); if (!b) return;
       const id = b.closest("[data-id]").dataset.id, x = lista.find(y => y.id === id); if (!x) return;
-      try {
-        if (b.dataset.l === "rest") {
-          const m = { ...x }; delete m.id; delete m.excluidoEm;
-          const bt = writeBatch(db); bt.set(doc(m.privado ? colPriv : col, id), clean(m)); bt.delete(doc(db, "users", uid, "lixeira", id)); await bt.commit();
-          toast("Restaurado na estante!");
-        } else {
-          if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar de vez?"; return; }
+      const acao = b.dataset.l;
+      if (acao === "del") { conf = id; esv = false; draw(); return; }
+      if (acao === "nao") { conf = null; draw(); return; }
+      if (acao === "rest") { if (await restaurarDaLixeira(x)) { lista = lista.filter(y => y.id !== id); draw(); } return; }
+      if (acao === "sim") {
+        try {
           await deleteDoc(doc(db, "users", uid, "lixeira", id)); await deleteDoc(doc(db, "users", uid, "avaliacoes", id)).catch(() => {});
-          toast("Apagado de vez.");
-        }
-        lista = lista.filter(y => y.id !== id); draw();
-      } catch (x2) { toast("Não foi possível agora. Verifique a internet."); }
+          lista = lista.filter(y => y.id !== id); conf = null; draw(); toast("Apagado de vez.");
+        } catch (x2) { toast("Não foi possível agora. Verifique a internet."); }
+      }
     });
   });
 }
@@ -1418,7 +1518,6 @@ function alertaFinal() {
 function avalsOf(mid) { return ui.visit ? (ui.visit.avals[mid] || {}) : (myAvals[mid] || {}); }
 function openInfo(mid) {
   const visit = ui.visit, it = source().get(mid); if (!it) return;
-  if (!visit) marcarAnimeVisto(it);
   const nota = parseNota(it.nota), lk = fixLink(it.link);
   const me = currentUser.uid, avals = avalsOf(mid);
   const lista = Object.entries(avals).map(([uid, v]) => ({ uid, ...v })).filter(v => parseNota(v.nota)).sort((a, b) => (b.em || 0) - (a.em || 0));
@@ -1467,7 +1566,9 @@ function openInfo(mid) {
       const idd = idadeDe(c);
       ci.innerHTML = `${idd ? `<div class="idaderow">${seloIdade(idd)}<span>Classificação indicativa: <b>${idd === "Livre" ? "Livre para todos" : "não recomendado para menores de " + idd.replace("+", " anos")}</b></span></div>` : ""}
         ${(c.generos || []).length ? `<div class="gens">${c.generos.map(g => `<span>${esc(g)}</span>`).join("")}</div>` : ""}
+        <div class="infoanime" id="infoAnime"></div>
         <div class="sinopse"><b>Sinopse</b>${c.sinopse ? `<p>${esc(c.sinopse)}</p>` : `<p class="hint">Sinopse em tradução… tente abrir de novo daqui a pouco.</p>`}</div>`;
+      preencherAnime(ci.querySelector("#infoAnime"), it.catId);
     });
     const ed = root.querySelector("#editIt"); if (ed) ed.onclick = () => openEditor(mid);
     const dn = root.querySelector("#denIt"); if (dn) dn.onclick = () => openDenuncia(visit, mid, it);
@@ -1911,9 +2012,9 @@ async function buscaGeral(q) {
   if (faltam.length) {
     try {
       const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ query: `query($a:[Int]){Page(perPage:10){media(id_in:$a,type:MANGA,isAdult:false){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year} ${ANIME_CAMPOS}}}}`, variables: { a: faltam } }) });
+        body: JSON.stringify({ query: `query($a:[Int]){Page(perPage:10){media(id_in:$a,type:MANGA,isAdult:false){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year}}}}`, variables: { a: faltam } }) });
       const ms = ((j && j.data && j.data.Page && j.data.Page.media) || []);
-      for (const m of ms) r.push({ ...rDeAniList(m), nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null, anime: animeDe(m) });
+      for (const m of ms) r.push({ ...rDeAniList(m), nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null });
     } catch (e) {}
   }
   r.forEach(x => { const e = extra.find(y => y.al === x.alId); if (e) { x.nomePT = e.pt; x.outros = e.nomes; } });
@@ -1943,7 +2044,7 @@ function openLupa() {
         return `<div class="lpitem" data-i="${i}" role="button" tabindex="0">
           ${r.capa ? `<img src="${esc(r.capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
           <span class="ct"><b>${esc(nome)}</b>${outro ? `<small>${esc(outro)}</small>` : ""}${bateu ? `<small class="bateu">Também conhecido como ${esc(bateu)}</small>` : ""}
-            <em>${esc(r.tipo || "Mangá")}${r.ano ? " · " + r.ano : ""}${(r.generos || []).length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em>${r.anime ? `<span class="atags">${tagAnime(r.anime)}</span>` : ""}</span>
+            <em>${esc(r.tipo || "Mangá")}${r.ano ? " · " + r.ano : ""}${(r.generos || []).length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
           ${naEstante(x) ? `<span class="mini rktem">✓ Na estante</span>` : `<button type="button" class="mini read" data-lpadd="${i}">+ Estante</button>`}
         </div>`;
       }).join("") : `<p class="hint">Nada encontrado com esse nome. Tente outro nome ou parte dele.</p>`;
@@ -2501,14 +2602,15 @@ const GUIA = [
   ["Link e capítulo novo", "sino", "<ol><li>Coloque no editor o link do site onde você lê.</li><li>O app confere o site e o sino avisa quando sai capítulo novo.</li></ol>"],
   ["Catálogo", "info", "<ol><li>Ao escolher a obra no catálogo, vêm capa, nomes, gêneros e sinopse.</li><li>Toque no <b>ⓘ</b> do card para ver tudo.</li></ol>"],
   ["Buscar no catálogo", "adicionar", "<ol><li>Toque na <b>lupa</b> ao lado do sino.</li><li>Busque por qualquer nome: inglês, japonês, português, coreano ou chinês.</li><li>Toque na obra para ver detalhes ou em <b>+ Estante</b> para adicionar.</li></ol>"],
-  ["Anime anunciado", "card", "<ol><li>O selo amarelo <b>Anime anunciado</b> aparece na capa quando sai o anúncio, e o sino avisa.</li><li>Depois que você abre o mangá, vira o selo escuro <b>Anime</b>.</li></ol>"],
+  ["Anime", "info", "<ol><li>Dentro do mangá aparece <b>Anime anunciado</b> (ainda não estreou) ou <b>Anime disponível</b> (já saiu episódio), conferido no MyAnimeList.</li><li>O link ao lado abre a página do anime no MyAnimeList. Quando sai um anúncio, o sino avisa.</li></ol>"],
+  ["Editar: modo ficha ou abas", "card", "<ol><li>No topo da janela de editar, toque em <b>Modo ficha</b> para trocar para <b>Modo abas</b> (Leitura · Obra · Capa).</li><li>O app lembra a sua escolha.</li></ol>"],
   ["Vitrine e foto de perfil", "perfil", "<ol><li>Em Social › <b>Meu perfil</b>, toque em Editar vitrine.</li><li>Escolha capa (imagem ou GIF), cor, bio e até 3 favoritos.</li></ol>"],
   ["Comunidade e visitas", "comunidade", "<ol><li>Em Social › <b>Comunidade</b>, veja os leitores.</li><li>Toque em alguém para visitar a estante e adicionar mangás dela à sua.</li></ol>"],
   ["Ranking", "ranking", "<ol><li>Em Social › <b>Ranking</b>: Todos os tempos, Em alta (os mais lidos em 7 dias), Este mês e Por gênero.</li><li><b>Para você</b> traz sugestões pelo que você lê.</li></ol>"],
   ["Privacidade", "privacidade", "<ol><li>O ícone de mangá no card deixa aquele mangá privado: só você vê.</li><li>Em Meu perfil, escolha estante pública ou fechada.</li></ol>"],
   ["Fórum e regras", "forum", "<ol><li>Em Social › <b>Fórum</b>: salas Geral, Recomendações e Spoilers.</li><li>Use Spoiler para cobrir revelações. As mensagens somem em 7 dias.</li></ol>"],
   ["Aparência", "aparencia", "<ol><li>No botão de quadradinhos ao lado dos filtros.</li><li>Escolha cards por linha, tamanho do texto, tema e a abertura do app.</li></ol>"],
-  ["Lixeira", "lixeira", "<ol><li>No menu ☰ › <b>Lixeira</b>.</li><li>O que você apagou fica lá e pode ser restaurado.</li></ol>"],
+  ["Lixeira", "lixeira", "<ol><li>No menu ☰ › <b>Lixeira</b>.</li><li>O que você apagou fica lá por 30 dias e pode ser restaurado.</li><li>Para apagar de vez, use a lixeirinha do mangá ou <b>Esvaziar lixeira</b>.</li></ol>"],
   ["Conta (senha, excluir)", "menu", "<ol><li>No menu ☰: <b>Trocar senha</b> e <b>Excluir minha conta</b>.</li><li>Excluir apaga a conta e todos os seus dados.</li></ol>"],
   ["Instalar e atualizar", "menu", "<ol><li>O app se atualiza sozinho ao abrir.</li><li>Quando sai uma versão nova para baixar, aparece um aviso no topo.</li></ol>"],
 ];
