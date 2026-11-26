@@ -280,7 +280,8 @@ service cloud.firestore {
       allow read: if dono(uid);
       allow write: if dono(uid) && (
         (id == 'forum' && request.resource.data.keys().hasOnly(['dnd']) && request.resource.data.dnd is bool)
-        || (id == 'tutorial' && request.resource.data.keys().hasOnly(['visto']) && request.resource.data.visto is bool));
+        || (id == 'tutorial' && request.resource.data.keys().hasOnly(['visto']) && request.resource.data.visto is bool)
+        || (id == 'regras' && request.resource.data.keys().hasOnly(['aceito']) && request.resource.data.aceito is bool));
     }
 
     // Qualquer outra coisa: bloqueado.

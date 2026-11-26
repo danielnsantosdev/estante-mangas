@@ -966,3 +966,15 @@ textarea.einp{resize:vertical;line-height:1.4;min-height:70px}
 .lxconf .btn{padding:5px 12px;font-size:12px;min-height:32px}
 .btn.lxdel{background:var(--red);color:#fff;border-color:var(--red)}
 @media (min-width:700px){ .lxconf{width:auto;border:0;padding:0} }
+
+/* ---------- fórum: sininho por sala e aceite das regras ---------- */
+.fsino{flex:none;display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--ink);border-radius:999px;background:var(--card);color:var(--muted);padding:4px 11px;font:700 11.5px Inter,sans-serif;cursor:pointer;white-space:nowrap}
+.fsino svg{width:13px;height:13px}
+.fsino.on{background:var(--ink);color:var(--card)}
+.fsinomini{display:inline-grid;place-items:center;color:var(--muted)}
+.fsinomini svg{width:13px;height:13px}
+@media (max-width:759px){ .fconvh small{display:none} .fsino{margin-left:auto} }
+.faceite{max-width:620px;margin:0 auto;padding:18px 16px 22px;display:flex;flex-direction:column;gap:12px}
+.faceite h3{margin:0;font:400 24px/1.1 Bangers,Impact,sans-serif;letter-spacing:1px}
+.faceite .btn{align-self:flex-end;margin-top:4px}
+.fgifopt.conf{opacity:.45;cursor:progress}

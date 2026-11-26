@@ -239,6 +239,7 @@ function startSync(uid) {
   render();
   talvezTutorial(uid);
   setTimeout(atualizarAnimes, 20000);
+  setTimeout(() => conferirSalas(true), 8000);
   const slowT = setTimeout(() => {
     if (!loaded) { loaded = true; render(); }
   }, 8000);
@@ -727,22 +728,25 @@ async function preencherAnime(el, catId) {   // mostra o que já sabe na hora e 
   try { const v = await animeDoMal(mid); if (el.isConnected) el.innerHTML = animeHTML(v); } catch (e) {}
 }
 let animeConferido = 0;
-async function atualizarAnimes() {   // 1x por sessão: avisa no sino quando um mangá da estante ganha anúncio de anime
+async function atualizarAnimes() {   // avisa no sino: mangá da estante ganhou anúncio de anime, e depois quando o anime ficou disponível
   if (!currentUser || !navigator.onLine || Date.now() - animeConferido < 6 * 3600e3) return;
   animeConferido = Date.now();
-  const av = lerJSON(AVISO_ANIME_KEY(), {}); av.avisados = av.avisados || {}; av.lista = av.lista || [];
-  const primeira = !av.iniciado;   // na primeira vez não enche o sino com anúncios antigos
+  const av = lerJSON(AVISO_ANIME_KEY(), {}); av.estado = av.estado || {}; av.lista = av.lista || [];
+  const primeira = !av.iniciado;   // na primeira vez só anota a situação, sem encher o sino com anúncios antigos
   let mudou = false;
   for (const it of [...items.values()]) {
     if (!it.catId || !currentUser) continue;
     try {
       const mid = await malDe(it.catId); if (!mid) continue;
-      const v = await animeDoMal(mid);
-      if (v.st !== "anu") continue;
-      const k = mid + ":" + v.aid; if (av.avisados[k]) continue;
-      av.avisados[k] = Date.now();
-      if (!primeira) { av.lista.unshift({ key: "anime:" + k, mid: it.id, titulo: it.title, em: Date.now() }); mudou = true; }
+      const v = await animeDoMal(mid), antes = av.estado[mid] || null;
+      if (v.st === antes || !v.st) { av.estado[mid] = v.st || antes; continue; }
+      av.estado[mid] = v.st;
+      if (primeira) continue;
+      const texto = v.st === "anu" ? "vai ganhar anime" : antes === "anu" ? "o anime já está disponível" : "";
+      if (!texto) continue;
+      av.lista.unshift({ key: "anime:" + mid + ":" + v.aid + ":" + v.st, mid: it.id, titulo: it.title, texto, em: Date.now() }); mudou = true;
     } catch (e) { break; }
+    salvarJSON(AVISO_ANIME_KEY(), av);
   }
   av.iniciado = true; av.lista = av.lista.slice(0, 50);
   salvarJSON(AVISO_ANIME_KEY(), av);
@@ -847,12 +851,12 @@ const ED_ICO = {
   ficha: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
   abas: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 9h18v11H3z"/><path d="M3 9V5h6v4M9 5h6v4"/></svg>`,
 };
-function openEditor(id) {
+function openEditor(id, opt = {}) {
   const it = id ? items.get(id) : null;
   let cover = it ? it.cover || "" : "";
   let catId = it ? it.catId || "" : "", titulo2 = it ? it.titulo2 || "" : "", alias = it ? it.alias || "" : "", catNome = "", catSel = null;
   let confirmDel = false, modo = "ficha", aba = 0, lixeiraCache = null;
-  try { modo = localStorage.getItem(ED_MODO_KEY) === "abas" ? "abas" : "ficha"; } catch (e) {}
+  try { modo = localStorage.getItem(ED_MODO_KEY) === "abas" && !opt.ficha ? "abas" : "ficha"; } catch (e) {}
   const stIni = it ? stOf(it) : "lendo", notaIni = it ? parseNota(it.nota) : 0;
   const notaTxt = (n) => n ? fmtNota(n) : "Sem nota";
   openModal(`
@@ -876,7 +880,7 @@ function openEditor(id) {
             <label class="ecol"><span class="elbl">Comentário · aparece no seu perfil</span><textarea name="comentario" class="einp" maxlength="300" rows="3" placeholder="Ex.: começa lento, fica ótimo a partir do cap. 50">${esc(it ? it.comentario || "" : "")}</textarea></label>
           </div>
         </div>
-        <div class="emais ${it ? "" : "aberto cad"}" id="edMais">
+        <div class="emais ${it ? (opt.mais ? "aberto" : "") : "aberto cad"}" id="edMais">
           <button type="button" class="emh" id="edMaisBtn"><b>Mais opções</b><span class="seta">▾</span></button>
           <div class="emc">
             <div class="edsec" data-sec="1">
@@ -1287,7 +1291,9 @@ function juntarNotifs() {
   }
   for (const { it, v } of novasAvaliacoes()) por({ key: "aval:" + it.id + ":" + (v.uid || v.apelido) + ":" + (v.em || 0), tipo: "aval", mid: it.id, titulo: it.title, capa: safeCover(it.cover) || "", em: v.em, texto: `@${v.apelido || "?"} deu nota ${fmtNota(parseNota(v.nota))}` });
   if (!forumDnd) for (const f of myAvisos.slice(0, 30)) por({ key: "forum:" + f.id, tipo: "forum", aviso: f.id, sala: f.sala, em: f.em, titulo: `@${f.apelido || "?"} ${f.tipo === "resposta" ? "respondeu você" : "mencionou você"}`, texto: `em ${nomeSala(f.sala)}${f.trecho ? " · " + f.trecho : ""}` });
-  for (const x of (lerJSON(AVISO_ANIME_KEY(), {}).lista || [])) { const it = items.get(x.mid); por({ key: x.key, tipo: "anime", mid: x.mid, titulo: x.titulo, capa: it ? safeCover(it.cover) || "" : "", em: x.em, texto: "vai ganhar anime" }); }
+  for (const x of (lerJSON(AVISO_ANIME_KEY(), {}).lista || [])) { const it = items.get(x.mid); por({ key: x.key, tipo: "anime", mid: x.mid, titulo: x.titulo, capa: it ? safeCover(it.cover) || "" : "", em: x.em, texto: x.texto || "vai ganhar anime" }); }
+  if (!forumDnd) for (const [k, v] of Object.entries(forumNovas)) por({ key: "fsala:" + k + ":" + v.desde, tipo: "fsala", sala: k, em: v.ultimo, titulo: nomeSala(k), texto: `${v.n} ${v.n === 1 ? "mensagem nova" : "mensagens novas"}` });
+  { const vis = vistoLer(); for (const x of L.itens) if (x.tipo === "fsala" && !x.lida && (vis[x.sala] || 0) > (+x.key.split(":")[2] || 0)) x.lida = true; }
   // capítulo já lido: a notificação continua, mas como lida
   for (const x of L.itens) if (x.tipo === "cap" && !x.lida) { const it = items.get(x.mid); if (!it || !unreadBadge(it)) x.lida = true; }
   L.itens = L.itens.filter(x => agora - (x.em || 0) < 30 * 864e5).sort((p, q) => (q.em || 0) - (p.em || 0)).slice(0, 60);
@@ -1337,7 +1343,7 @@ function openBell() {
       const x = L.itens.find(y => y.key === el.dataset.k); if (!x) return;
       marcar(x.key);
       if (e.target.closest("[data-ler]")) { markSeen(x.mid); draw(); return; }
-      if (x.tipo === "forum") { forumEstado.sala = x.sala; openPeople("forum"); return; }
+      if (x.tipo === "forum" || x.tipo === "fsala") { forumEstado.sala = x.sala; openPeople("forum"); return; }
       if (x.mid && items.get(x.mid)) { openInfo(x.mid); return; }
       draw();
     });
@@ -2221,7 +2227,7 @@ async function adicionarObraPV(x, btn) {
 
 
 // ---------- Fórum: 3 salas, mensagens somem em 7 dias ----------
-const FORUM_SALAS = [{ k: "geral", n: "Geral", d: "Conversa livre sobre mangás" }, { k: "rec", n: "Recomendações", d: "Peça e dê dicas de leitura" }, { k: "spo", n: "Spoilers", d: "Tudo aqui fica coberto até tocar" }];
+const FORUM_SALAS = [{ k: "geral", n: "Sala geral", d: "Conversa livre sobre mangás" }, { k: "rec", n: "Sala de recomendações", d: "Peça e dê dicas de leitura" }, { k: "spo", n: "Sala de spoilers", d: "Tudo aqui fica coberto até tocar" }];
 const nomeSala = (k) => (FORUM_SALAS.find(x => x.k === k) || {}).n || k;
 const forumEstado = { sala: null };
 const forumPC = () => matchMedia("(min-width:760px)").matches;
@@ -2253,15 +2259,52 @@ const horaDe = (ms) => { const d = new Date(ms); return `${String(d.getHours()).
 const diaDe = (ms) => { const d = new Date(ms), h = new Date(); const z = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); const dif = Math.round((z(h) - z(d)) / 864e5); return dif === 0 ? "Hoje" : dif === 1 ? "Ontem" : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`; };
 const REGRAS_HTML = `<ol class="regras">
   <li><b>Respeito acima de tudo.</b> Nada de ofender, ameaçar ou humilhar ninguém, por nenhum motivo.</li>
-  <li><b>Spoiler só coberto.</b> Use o botão Spoiler, ou escreva na sala Spoilers.</li>
-  <li><b>Nada de conteúdo adulto</b>, nem links ou GIFs impróprios.</li>
-  <li><b>Sem spam ou propaganda.</b> Uma mensagem a cada 5 segundos.</li>
-  <li><b>Palavrão leve passa</b>; os pesados aparecem com asteriscos; ofensas a pessoas não são enviadas.</li>
-  <li><b>As mensagens somem em 7 dias.</b> Viu algo errado? Toque na mensagem e em Denunciar.</li>
-  <li>Quem descumprir pode ser silenciado (5 minutos, 1 hora, 24 horas ou 7 dias).</li></ol>`;
+  <li><b>Spoiler só coberto.</b> Use o botão Spoiler, ou escreva na Sala de spoilers.</li>
+  <li><b>Nada de conteúdo adulto</b>, nem links, GIFs ou imagens impróprias.</li>
+  <li><b>Não compartilhe dados pessoais</b>, seus ou de outras pessoas: telefone, endereço, escola, redes sociais.</li>
+  <li><b>As mensagens somem em 7 dias.</b></li>
+  <li><b>Viu algo errado?</b> Toque na mensagem e denuncie.</li>
+  <li><b>Quem descumprir as regras poderá ser silenciado</b> por 5 minutos, 1 hora, 24 horas ou 7 dias.</li></ol>`;
 function abrirRegras() {
   abrirFolha(`<div class="mhead"><h2 class="fh">Regras da comunidade</h2><button type="button" class="icon-btn" data-fx>✕</button></div><div class="mbody">${REGRAS_HTML}</div>`);
 }
+const REGRAS_KEY = () => "estante-regras-ok-" + (currentUser ? currentUser.uid : "");
+let regrasOk = null;
+async function regrasAceitas() {
+  if (regrasOk) return true;
+  try { if (localStorage.getItem(REGRAS_KEY()) === "1") return (regrasOk = true); } catch (e) {}
+  try { const d = await getDoc(doc(db, "users", currentUser.uid, "config", "regras")); if (d.exists() && (d.data() || {}).aceito) { try { localStorage.setItem(REGRAS_KEY(), "1"); } catch (e) {} return (regrasOk = true); } } catch (e) {}
+  return false;
+}
+function pedirRegras(box, depois) {   // primeira entrada no fórum: lê e concorda com as regras
+  box.innerHTML = `<div class="faceite"><h3>Regras da comunidade</h3><p class="fhint">Antes de entrar no fórum, leia as regras. Elas valem para todas as salas.</p>${REGRAS_HTML}<button type="button" class="btn primary" id="fAceito">Li e concordo</button></div>`;
+  box.querySelector("#fAceito").onclick = () => {
+    regrasOk = true; try { localStorage.setItem(REGRAS_KEY(), "1"); } catch (e) {}
+    setDoc(doc(db, "users", currentUser.uid, "config", "regras"), { aceito: true }).catch(() => {});
+    depois();
+  };
+}
+// sininho de cada sala: as públicas começam desligadas
+const SINOS_KEY = () => "estante-forum-sinos-" + (currentUser ? currentUser.uid : "");
+const sinoLigado = (k) => !!lerJSON(SINOS_KEY(), {})[k];
+function trocarSino(k) { const v = lerJSON(SINOS_KEY(), {}); v[k] = !v[k]; salvarJSON(SINOS_KEY(), v); return v[k]; }
+let forumNovas = {}, forumConferido = 0;
+async function conferirSalas(forcar) {   // conta mensagens novas das salas com o sininho ligado
+  if (!currentUser || forumDnd || !navigator.onLine || (!forcar && Date.now() - forumConferido < 4 * 60e3)) return;
+  forumConferido = Date.now();
+  const visto = vistoLer(), novo = {};
+  for (const x of FORUM_SALAS) {
+    if (!sinoLigado(x.k)) continue;
+    try {
+      const sn = await getDocs(query(collection(db, "forum", x.k, "msgs"), orderBy("criadoEm", "desc"), limit(20)));
+      const ms = sn.docs.map(d => d.data()).filter(m => (m.criadoEm || 0) > (visto[x.k] || 0) && m.uid !== currentUser.uid && !m.apagada);
+      if (ms.length) novo[x.k] = { n: ms.length, desde: visto[x.k] || 0, ultimo: ms[0].criadoEm || Date.now() };
+    } catch (e) {}
+  }
+  forumNovas = novo; updateBell();
+}
+setInterval(() => { if (document.visibilityState === "visible") conferirSalas(); }, 60e3);
+const ICO_SINO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
 function montarForum(root) {
   const box = root.querySelector("#forum"), me = currentUser.uid;
   const msgs = { geral: [], rec: [], spo: [] }, unsubs = [];
@@ -2270,7 +2313,7 @@ function montarForum(root) {
   const naoLidas = (k) => { const v = vistoLer()[k] || 0; return msgs[k].filter(m => (m.criadoEm || 0) > v && m.uid !== me).length; };
   const salasHTML = () => `<div class="fsalas"><div class="fsalash">Salas</div>${FORUM_SALAS.map(x => {
       const u = msgs[x.k][msgs[x.k].length - 1], n = forumEstado.sala === x.k ? 0 : naoLidas(x.k);
-      return `<button type="button" class="fsala ${forumEstado.sala === x.k ? "on" : ""}" data-sala="${x.k}"><b>${x.n}${n ? `<span class="fnlid">${n > 99 ? "99+" : n}</span>` : ""}</b><small>${x.d}</small>${!forumPC() && u ? `<span class="fult">@${esc(u.apelido)}: ${u.apagada ? "mensagem apagada" : u.spoiler ? "Spoiler" : u.gif && !u.texto ? "GIF" : esc(u.texto)}</span>` : ""}</button>`; }).join("")}
+      return `<button type="button" class="fsala ${forumEstado.sala === x.k ? "on" : ""}" data-sala="${x.k}"><b>${x.n}${sinoLigado(x.k) ? `<span class="fsinomini">${ICO_SINO}</span>` : ""}${n ? `<span class="fnlid">${n > 99 ? "99+" : n}</span>` : ""}</b><small>${x.d}</small>${!forumPC() && u ? `<span class="fult">@${esc(u.apelido)}: ${u.apagada ? "mensagem apagada" : u.spoiler ? "Spoiler" : u.gif && !u.texto ? "GIF" : esc(u.texto)}</span>` : ""}</button>`; }).join("")}
     <div class="fsalasfoot"><label class="fsw"><input type="checkbox" id="fDnd" ${forumDnd ? "checked" : ""}><span class="fsl"></span><span>Não perturbe<small>Sem avisos do fórum no sino</small></span></label><button type="button" class="fregras" id="fRegras">Regras da comunidade</button></div></div>`;
   const msgHTML = (m) => {
     if (m.apagada) return `<div class="fmsg apagada"><span class="fav" style="background:#bbb"></span><div class="fmc"><div class="fbal">Mensagem apagada pelo administrador.</div></div></div>`;
@@ -2302,7 +2345,7 @@ function montarForum(root) {
         <button type="button" class="fbt env" data-c="env" ${espera ? "disabled" : ""}>${espera ? `Aguarde ${espera}s` : "Enviar"}</button></div>
       <div class="finfo"><span class="fst"></span><span class="fextra2">${temGif ? `<button type="button" class="fbt ${gifAberto ? "on" : ""}" data-c="gif">GIF</button>` : ""}${spo ? "" : `<button type="button" class="fbt ${spoiler ? "on" : ""}" data-c="spo">Spoiler</button>`}</span><span class="fcnt">${rascunho.length}/500</span></div></div>`;
   };
-  const convHTML = () => `<div class="fconv"><div class="fconvh">${forumPC() ? "" : `<button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>`}<b>${esc(nomeSala(forumEstado.sala))}</b><small>Mensagens somem 7 dias depois</small></div>
+  const convHTML = () => `<div class="fconv"><div class="fconvh">${forumPC() ? "" : `<button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>`}<b>${esc(nomeSala(forumEstado.sala))}</b><small>Mensagens somem 7 dias depois</small><button type="button" class="fsino ${sinoLigado(forumEstado.sala) ? "on" : ""}" data-c="sino" title="Avisar no sino">${ICO_SINO}${sinoLigado(forumEstado.sala) ? "Avisos ligados" : "Avisos desligados"}</button></div>
     <div class="fmsgs">${listaHTML()}</div>${compHTML()}</div>`;
   const pintaLista = () => {
     const ms = box.querySelector(".fmsgs"); if (!ms) return;
@@ -2324,7 +2367,7 @@ function montarForum(root) {
     const gq = box.querySelector("#fGifQ"); if (gq) gq.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscarGif(); } });
     const dnd = box.querySelector("#fDnd"); if (dnd) dnd.onchange = () => { setDoc(doc(db, "users", me, "config", "forum"), { dnd: dnd.checked }).catch(() => {}); forumDnd = dnd.checked; updateBell(); toast(dnd.checked ? "Não perturbe ligado: o fórum não avisa no sino." : "Avisos do fórum ligados."); };
     const rg = box.querySelector("#fRegras"); if (rg) rg.onclick = abrirRegras;
-    if (forumEstado.sala) vistoMarcar(forumEstado.sala);
+    if (forumEstado.sala) { vistoMarcar(forumEstado.sala); if (forumNovas[forumEstado.sala]) { delete forumNovas[forumEstado.sala]; updateBell(); } }
   };
   // fica no fim da conversa, inclusive quando os GIFs terminam de carregar
   function grudaNoFim(ms, agora) {
@@ -2394,11 +2437,21 @@ function montarForum(root) {
       if (a.dataset.a === "den") abrirDenunciaForum(m, forumEstado.sala);
       return;
     }
-    const g = e.target.closest("[data-gifu]"); if (g) { enviar(g.dataset.gifu); return; }
+    const g = e.target.closest("[data-gifu]");
+    if (g) {
+      if (g.disabled) return; g.disabled = true; g.classList.add("conf");
+      verificarImagem(g.dataset.gifu).then(r => {
+        g.disabled = false; g.classList.remove("conf");
+        if (r === "adulto") { toast("Esse GIF parece impróprio e não pode ser enviado.", 4000); g.remove(); return; }
+        enviar(g.dataset.gifu);
+      });
+      return;
+    }
     const c = e.target.closest("[data-c]");
     if (c) {
       const k = c.dataset.c;
       if (k === "voltar") { forumEstado.sala = null; desenha(); }
+      else if (k === "sino") { const on = trocarSino(forumEstado.sala); toast(on ? `Avisos ligados: o sino avisa as mensagens novas da ${nomeSala(forumEstado.sala)}.` : "Avisos desta sala desligados.", 3200); desenha(); }
       else if (k === "cancresp") { resp = null; desenha(); }
       else if (k === "spo") { spoiler = !spoiler; box.querySelectorAll('[data-c="spo"]').forEach(x => x.classList.toggle("on", spoiler)); }
       else if (k === "gif") { gifAberto = !gifAberto; desenha(); const q = box.querySelector("#fGifQ"); if (q) q.focus(); }
@@ -2415,15 +2468,16 @@ function montarForum(root) {
       const limite = Date.now() - 7 * 864e5;
       msgs[x.k] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => (m.criadoEm || 0) > limite).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
       if (!box.isConnected) return;
-      if (forumEstado.sala === x.k) { pintaLista(); vistoMarcar(x.k); }
+      if (forumEstado.sala === x.k && box.querySelector(".fmsgs")) { pintaLista(); vistoMarcar(x.k); }
       if (!forumEstado.sala || forumPC()) { const ss = box.querySelector(".fsalas"); if (ss) { const novo = document.createElement("div"); novo.innerHTML = salasHTML(); ss.replaceWith(novo.firstElementChild); const dnd = box.querySelector("#fDnd"); if (dnd) dnd.onchange = () => { setDoc(doc(db, "users", me, "config", "forum"), { dnd: dnd.checked }).catch(() => {}); forumDnd = dnd.checked; updateBell(); }; const rg = box.querySelector("#fRegras"); if (rg) rg.onclick = abrirRegras; } }
     }, () => { if (box.isConnected && forumEstado.sala === x.k) { const ms = box.querySelector(".fmsgs"); if (ms) ms.innerHTML = `<p class="fvazio">Não consegui carregar as mensagens agora.</p>`; } }));
   }
   getDoc(doc(db, "forumUsers", me)).then(d => { const t = d.exists() && (d.data() || {}).silenciadoAte; silAte = t && t.toMillis ? t.toMillis() : 0; if (silAte > Date.now() && box.isConnected) desenha(); }).catch(() => {});
-  const aoMudarTela = () => { if (box.isConnected) desenha(); };
+  const aoMudarTela = () => { if (box.isConnected && regrasOk) desenha(); };
   const mq = matchMedia("(min-width:760px)"); mq.addEventListener("change", aoMudarTela);
-  desenha();
-  return () => { unsubs.forEach(u => u()); clearInterval(esperaT); mq.removeEventListener("change", aoMudarTela); fecharFolha(); };
+  if (regrasOk) desenha();
+  else { box.innerHTML = `<p class="fhint" style="padding:16px">Carregando…</p>`; regrasAceitas().then(ok => { if (!box.isConnected) return; if (ok) desenha(); else pedirRegras(box, desenha); }); }
+  return () => { unsubs.forEach(u => u()); clearInterval(esperaT); mq.removeEventListener("change", aoMudarTela); fecharFolha(); setTimeout(() => conferirSalas(true), 500); };
 }
 const MOTIVOS_FORUM = { ofensa: "Ofensa ou desrespeito", spoiler: "Spoiler sem aviso", improprio: "Conteúdo impróprio", spam: "Spam ou propaganda", outro: "Outro motivo" };
 function abrirDenunciaForum(m, sala) {
@@ -2484,7 +2538,7 @@ function iniciarTutorial(rever) {
     { t: "Bem-vindo à Estante de Mangás!", p: "Em 1 minuto você conhece o essencial. Dá para pular quando quiser." },
     { alvo: () => $("#addBtn"), t: "Adicione seus mangás", p: "Toque aqui para adicionar um mangá à sua estante.",
       prox: async () => {
-        openEditor();
+        openEditor(null, { ficha: true });
         const q = await esperaEl("#catQ", 3000); if (!q) return;
         q.value = "One Piece"; const go = document.querySelector("#catGo"); if (go) go.click();
         await esperaEl("#catRes .catitem", 9000);
@@ -2492,13 +2546,13 @@ function iniciarTutorial(rever) {
     { alvo: () => document.querySelector("#catBox"), t: "Encontre no catálogo", p: "Encontre seu mangá no catálogo: digite o nome e toque no resultado.",
       prox: async () => {
         const r = document.querySelector("#catRes .catitem");
-        if (r) { r.click(); for (let i = 0; i < 80 && !/vinculado/.test(($("#catStatus") || {}).textContent || ""); i++) await espera(150); }
+        if (r) { r.click(); for (let i = 0; i < 80 && !((document.querySelector('#ed [name="title"]') || {}).value || "").trim(); i++) await espera(150); }
         const ch = document.querySelector('#ed [name="chapter"]'); if (ch && !ch.value) ch.value = "1";
-        const st = document.querySelector('#ed [name="status"]'); if (st) st.scrollIntoView({ block: "center" });
+        const st = document.querySelector("#ed .edst"); if (st) st.scrollIntoView({ block: "center" });
         await espera(250);
       } },
-    { alvo: () => uniao([document.querySelector('#ed [name="chapter"]'), document.querySelector('#ed [name="status"]'), document.querySelector('#ed [name="link"]')]), margem: 10,
-      t: "Ajuste sua leitura", p: "Diga em que capítulo você está e escolha o status do seu mangá. Se quiser, cole o link do site onde você lê. Depois, toque em Salvar.", lista: true,
+    { alvo: () => uniao([document.querySelector('#ed [name="chapter"]'), document.querySelector("#ed .edst"), document.querySelector('#ed [name="link"]')]), margem: 10,
+      t: "Ajuste sua leitura", p: "Diga em que capítulo você está e escolha o status do seu mangá. Se quiser, cole o link do site onde você lê. Depois, toque em Adicionar.",
       prox: async () => {
         const f = document.querySelector("#ed");
         const jaTem = [...items.values()].some(it => /one piece/i.test(it.title));
@@ -2787,7 +2841,7 @@ function urlGif(o, tamanhos) {
   return "";
 }
 async function buscaGiphy(q, key) {
-  const j = await httpJSON(`https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13&lang=pt`);
+  const j = await httpJSON(`https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=pg&lang=pt`);
   return (j.data || []).map(g => {
     const im = g.images || {};
     const full = (im.original && im.original.url) || (im.downsized && im.downsized.url) || "";
@@ -2801,7 +2855,7 @@ async function buscaGiphy(q, key) {
 }
 async function buscaKlipy(q, key) {
   const cid = encodeURIComponent((currentUser && currentUser.uid) || "anon");
-  const j = await httpJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&page=1&customer_id=${cid}&locale=pt_BR&content_filter=medium`);
+  const j = await httpJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&page=1&customer_id=${cid}&locale=pt_BR&content_filter=high`);
   const lista = (j.data && (j.data.data || j.data)) || [];
   return (Array.isArray(lista) ? lista : []).filter(g => g && g.file && g.type !== "ad").map(g => {
     const hdf = g.file.hd && (g.file.hd.mp4 || g.file.hd.gif || g.file.hd.webp); const w = Number(hdf && hdf.width) || 0;
@@ -3251,8 +3305,8 @@ function avisoCard(id, tipo) {
     <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-x>Agora não</button><button type="button" class="btn primary" id="avGo">${img ? "Trocar capa" : "Editar link"}</button></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelector("#avGo").onclick = () => {
-      openEditor(id);
-      setTimeout(() => { const el = document.querySelector(img ? ".cover-edit" : '#ed [name="link"]'); if (el) { el.scrollIntoView({ block: "center" }); if (!img) el.focus(); } }, 120);
+      openEditor(id, { ficha: true, mais: true });
+      setTimeout(() => { const el = document.querySelector(img ? "#ed .ecapa" : '#ed [name="link"]'); if (el) { el.scrollIntoView({ block: "center" }); if (!img) el.focus(); } }, 120);
     };
   });
 }

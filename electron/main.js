@@ -31,6 +31,7 @@ function createWindow() {
     icon: path.join(__dirname, "..", "build", "icon.png"),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(__dirname, "preload.js") },
   });
+  win.maximize();   // abre sempre ocupando a tela toda
   win.loadFile(path.join(__dirname, "..", "www", "index.html"));
   // Links externos (site do mangá) abrem no navegador normal.
   win.webContents.setWindowOpenHandler(({ url }) => {
