@@ -1,15 +1,8 @@
 {
-  "quando": "2026-11-26T11:04:24.781Z",
-  "anilist": {
-    "The Beginning After the End": {
-      "status": 200,
-      "corpo": "{\"data\":{\"Page\":{\"media\":[]}}}"
-    },
-    "One Punch Man": {
-      "status": 200,
-      "corpo": "{\"data\":{\"Page\":{\"media\":[{\"id\":85364,\"idMal\":null,\"format\":\"MANGA\",\"countryOfOrigin\":\"JP\",\"title\":{\"romaji\":\"One Punch Man\",\"english\":null}},{\"id\":74347,\"idMal\":44347,\"format\":\"MANGA\",\"countryOfOrigin\":\"JP\",\"title\":{\"romaji\":\"One Punch-Man\",\"english\":\"One-Punch Man\"}}]}}}"
-    }
+  "quando": "2026-11-26T11:40:21.884Z",
+  "busca": {
+    "The Beginning After the End": "não encontrado",
+    "One Punch-Man": "não encontrado"
   },
-  "mangadex": 200,
   "log": []
 }
