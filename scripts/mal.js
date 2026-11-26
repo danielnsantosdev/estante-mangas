@@ -102,6 +102,9 @@ const precisa = (c) => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
     out.busca = {};
+    for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
+      try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : "não encontrado"; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
+    }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
