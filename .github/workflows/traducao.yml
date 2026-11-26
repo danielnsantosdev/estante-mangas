@@ -1,4 +1,4 @@
-# Tradução das sinopses novas com o DeepL, de hora em hora.
+# De hora em hora: tradução das sinopses novas com o DeepL e conferência do MyAnimeList (anime e situação).
 # As obras novas aparecem primeiro com a tradução rápida do app e, em até 1 hora, ganham a versão do DeepL.
 name: Tradução
 
@@ -7,7 +7,7 @@ on:
     - cron: "17 * * * *"
   push:
     branches: [main]
-    paths: ["scripts/deepl.js", ".github/workflows/traducao.yml"]
+    paths: ["scripts/deepl.js", "scripts/mal.js", ".github/workflows/traducao.yml"]
   workflow_dispatch:
 
 jobs:
@@ -34,3 +34,15 @@ jobs:
           FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
           DEEPL_KEY: ${{ secrets.DEEPL_KEY }}
         run: node deepl.js
+      - name: Testar o MyAnimeList com o One Piece (só quando a rotina muda)
+        if: github.event_name == 'push'
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          MODO: diag
+        run: node mal.js
+      - name: Conferir anime e situação no MyAnimeList
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+        run: node mal.js
