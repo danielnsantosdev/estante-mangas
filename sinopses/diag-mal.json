@@ -1,25 +1,14 @@
 {
-  "quando": "2026-11-26T11:47:23.074Z",
-  "busca": {
-    "The Beginning After the End": "não encontrado",
-    "One Punch-Man": "não encontrado"
-  },
+  "quando": "2026-11-26T11:50:21.435Z",
+  "busca": {},
   "pagina": {
-    "/search/prefix.json?type=manga&v=1&keyword=The%20Beginning%20After%20the%20End": {
-      "tamanho": 44,
-      "inicio": "{\"categories\":[{\"type\":\"manga\",\"items\":[]}]}",
-      "links": []
-    },
-    "/manga.php?q=The%20Beginning%20After%20the%20End&cat=manga": {
-      "tamanho": 0,
-      "inicio": "",
-      "links": []
-    },
-    "/search/all?cat=manga&q=The%20Beginning%20After%20the%20End": {
-      "tamanho": 80431,
-      "inicio": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html lang=\"en\" class=\"appearance-none\"><head>  \n<link rel=\"preconnect\" href=\"//www.googletagmanager.com/\" crossorigin=\"anonymous\"/>\n<link rel=\"preconnect\" href=\"https://cdn.myanimelist.net\" crossorigin=\"anonymous\"/>\n<title>Search All - MyAnimeList.net\n</title>\n<meta name=\"descr",
-      "links": []
-    }
+    "prefix beginning after": "{\"categories\":[{\"type\":\"manga\",\"items\":[{\"id\":183315,\"type\":\"manga\",\"name\":\"Shigoto no Ato wa Nukumori wo\",\"url\":\"https:\\/\\/myanimelist.net\\/manga\\/183315\\/Shigoto_no_Ato_wa_Nukumori_wo\",\"image_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x180\\/images\\/manga\\/2\\/328102.jpg?s=7c643772c7a079bd385ff6d405eea5f2\",\"thumbnail_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x76\\/images\\/manga\\/2\\/328102.jpg?s=f07a8a050e911d9cc08bc43bd9551f1c\",\"payload\":{\"media_type\":\"Manga\",\"start_year\":2025,\"published\":\"Jun 18, 2025\",\"score\":\"N\\/A\",\"status\":\"Finished\"},\"es_score\":39.726597},{\"id\":163491,\"type\":\"manga\",\"name",
+    "prefix The Beginning After": "{\"categories\":[{\"type\":\"manga\",\"items\":[{\"id\":183315,\"type\":\"manga\",\"name\":\"Shigoto no Ato wa Nukumori wo\",\"url\":\"https:\\/\\/myanimelist.net\\/manga\\/183315\\/Shigoto_no_Ato_wa_Nukumori_wo\",\"image_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x180\\/images\\/manga\\/2\\/328102.jpg?s=7c643772c7a079bd385ff6d405eea5f2\",\"thumbnail_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x76\\/images\\/manga\\/2\\/328102.jpg?s=f07a8a050e911d9cc08bc43bd9551f1c\",\"payload\":{\"media_type\":\"Manga\",\"start_year\":2025,\"published\":\"Jun 18, 2025\",\"score\":\"N\\/A\",\"status\":\"Finished\"},\"es_score\":39.726597},{\"id\":163491,\"type\":\"manga\",\"name",
+    "prefix one punch": "{\"categories\":[{\"type\":\"manga\",\"items\":[{\"id\":44347,\"type\":\"manga\",\"name\":\"One Punch-Man\",\"url\":\"https:\\/\\/myanimelist.net\\/manga\\/44347\\/One_Punch-Man\",\"image_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x180\\/images\\/manga\\/3\\/80661.jpg?s=265e8a3ed92dd01b65f47800cdf2abea\",\"thumbnail_url\":\"https:\\/\\/cdn.myanimelist.net\\/r\\/116x76\\/images\\/manga\\/3\\/80661.jpg?s=fa64f4ab53e0ae30a5fcf50008d43d7d\",\"payload\":{\"media_type\":\"Manga\",\"start_year\":2012,\"published\":\"Jun 14, 2012 to ?\",\"score\":\"8.68\",\"status\":\"Publishing\"},\"es_score\":99.70841},{\"id\":191558,\"type\":\"manga\",\"name\":\"[Hihou] Comyuryoku 0 no Ota",
+    "all": [
+      "/manga/adapted?_location=mal_h_m"
+    ],
+    "trecho": "<body class=\"page-common santahat search_all\" data-ms=\"true\" data-country-code=\"US\" data-time=\"17956 … /manga.php?_location=mal_h_m\">Manga Search</a></li>\n            <li><a href=\"https://myanimelist.net/topmanga.php?_location=mal_h_m\">Top Manga</a></li>\n            <li><a href=\"https://myanimelist.net/manga/adapted?_location=mal_h_m\" class=\"menu-new\">Adapted to Anime</a></li>\n            <li><a href=\"https://myanimelist.net/store?_location=mal_h_m\">Manga Store</a></li>\n            <li><a href=\"htt"
   },
   "log": []
 }
