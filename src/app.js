@@ -470,7 +470,9 @@ const generosPT = (lista) => [...new Set((lista || []).map(g => GENEROS[g]).filt
 const TIPO = { JP: "Mangá", KR: "Manhwa", CN: "Manhua", TW: "Manhua" };
 const decodeHTML = (s) => { const t = document.createElement("textarea"); t.innerHTML = s; return t.value; };
 function limpaSinopse(s) {
-  return decodeHTML(String(s || ""))
+  return decodeHTML(String(s || "")).split(/\n\s*(?:-{3,}|_{3,}|\*{3,})\s*(?:\n|$)/)[0]   // o que vem depois de "---" são links (trailers, livros, traduções)
+    .replace(/^\s*[-*>]\s*\[[^\]]*\]\([^)]*\).*$/gm, "").replace(/\[([^\]]*)\]\(https?:[^)]*\)/g, "$1")
+    .replace(/\s+(Observação|Obs\.|Note)\s*:[^\n]*$/i, "")
     .replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/~!.*?!~/gs, "")
     .replace(/\((Source|Fonte)[^)]*\)/gi, "").replace(/\[Written by[^\]]*\]/gi, "").replace(/__|\*\*/g, "")
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500);
