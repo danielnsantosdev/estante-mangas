@@ -1046,3 +1046,6 @@ textarea.einp{resize:vertical;line-height:1.4;min-height:70px}
   html.web .fab{bottom:calc(18px + env(safe-area-inset-bottom))}
   html.web .modal{padding-bottom:env(safe-area-inset-bottom)}
 }
+
+/* a bolinha de sincronização saiu: avisos aparecem na tela só quando há problema */
+#sync{display:none!important}

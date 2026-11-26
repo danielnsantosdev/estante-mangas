@@ -83,8 +83,9 @@ function updateSync() {
   if (netState.fromCache) { el.className = "sync"; txt.textContent = "Conectando…"; return; }
   el.className = "sync ok"; txt.textContent = "Sincronizado";
 }
-window.addEventListener("online", updateSync);
-window.addEventListener("offline", updateSync);
+window.addEventListener("online", () => { updateSync(); if (avisouOffline) { avisouOffline = false; toast("Internet de volta: suas mudanças foram enviadas.", 3000); } });
+window.addEventListener("offline", () => { updateSync(); if (currentUser) { avisouOffline = true; toast("Sem internet: suas mudanças ficam guardadas no aparelho e sobem quando a conexão voltar.", 5000); } });
+let avisouOffline = false;
 
 // ---------- Firebase ----------
 const ADMIN = String(adminEmail || "").trim().toLowerCase();
@@ -327,10 +328,11 @@ function flush(id) {
   const it = items.get(id);
   // O Firestore guarda no aparelho na hora e envia quando houver internet.
   const p = it ? setDoc(doc(it.privado ? colPriv : col, id), strip(it)) : deleteDoc(doc(col, id));
+  const nome = it ? `“${it.title}”` : "a exclusão";
   p.catch(e => {
-    if (e.code === "invalid-argument" || e.code === "resource-exhausted") toast("Não foi possível salvar: a imagem é grande demais.", 4000);
-    else if (e.code === "permission-denied") toast("O servidor recusou salvar. Confira se as regras novas foram publicadas no Firebase.", 5000);
-    else toast("Falha ao salvar — tente de novo.", 3000);
+    if (e.code === "invalid-argument" || e.code === "resource-exhausted") toast(`Não consegui salvar ${nome}: a imagem da capa é grande demais.`, 5000);
+    else if (e.code === "permission-denied") toast(`O servidor recusou salvar ${nome}. Tente de novo; se continuar, me avise.`, 5000);
+    else toast(`Não consegui salvar ${nome}. Tente de novo.`, 4000);
   });
   updateSync();
 }
@@ -697,7 +699,7 @@ function lerJSON(k, d) { try { return JSON.parse(localStorage.getItem(k) || "nul
 function salvarJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 let animeCache = lerJSON(ANIME_CACHE_KEY, {});
 const jikanFila = []; let jikanRodando = false;
-function jikan(path) { return new Promise((res, rej) => { jikanFila.push({ path, res, rej }); rodarJikan(); }); }
+function jikan(path, frente) { return new Promise((res, rej) => { const t = { path, res, rej }; if (frente) jikanFila.unshift(t); else jikanFila.push(t); rodarJikan(); }); }
 async function rodarJikan() {   // o Jikan aceita poucas chamadas por minuto: uma de cada vez, com intervalo
   if (jikanRodando) return; jikanRodando = true;
   while (jikanFila.length) {
@@ -712,18 +714,21 @@ async function malDe(catId) {
   if (!/^al\d+$/.test(catId || "")) return 0;
   const c = await lerCatalogo(catId).catch(() => null); return c && c.malId ? +c.malId : 0;
 }
-const ANIME_VALIDADE = { anu: 20 * 3600e3, dis: 7 * 864e5, nada: 3 * 864e5 };
+const ANIME_VALIDADE = { anu: 20 * 3600e3, dis: Infinity, nada: 3 * 864e5 };   // "disponível" não volta atrás: confere uma vez só
 const animePendente = new Map();
-function animeDoMal(mid) {
+function animeDoMal(mid, frente) {
   const c = animeCache[mid];
   if (c && Date.now() - c.em < ANIME_VALIDADE[c.st || "nada"]) return Promise.resolve(c);
-  if (animePendente.has(mid)) return animePendente.get(mid);
+  if (animePendente.has(mid)) {   // já está na fila: se o mangá foi aberto agora, passa na frente
+    if (frente) jikanFila.sort((a, b) => (b.path.includes(`/manga/${mid}/`) ? 1 : 0) - (a.path.includes(`/manga/${mid}/`) ? 1 : 0));
+    return animePendente.get(mid);
+  }
   const pr = (async () => {
-    const r = await jikan(`/manga/${mid}/relations`);
+    const r = await jikan(`/manga/${mid}/relations`, frente);
     const ids = ((r && r.data) || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
     let st = null, aid = 0;
     for (const id of ids.slice(0, 6)) {
-      const a = await jikan(`/anime/${id}`); const sa = a && a.data && a.data.status;
+      const a = await jikan(`/anime/${id}`, frente); const sa = a && a.data && a.data.status;
       if (sa === "Currently Airing" || sa === "Finished Airing") { st = "dis"; aid = id; break; }
       if (sa === "Not yet aired" && !st) { st = "anu"; aid = id; }
     }
@@ -741,7 +746,7 @@ async function preencherAnime(el, catId) {   // mostra o que já sabe na hora e 
   if (!el) return; el.innerHTML = "";
   const mid = await malDe(catId); if (!mid || !el.isConnected) return;
   if (animeCache[mid]) el.innerHTML = animeHTML(animeCache[mid]);
-  try { const v = await animeDoMal(mid); if (el.isConnected) el.innerHTML = animeHTML(v); } catch (e) {}
+  try { const v = await animeDoMal(mid, true); if (el.isConnected) el.innerHTML = animeHTML(v); } catch (e) {}
 }
 let animeConferido = 0;
 async function atualizarAnimes() {   // avisa no sino: mangá da estante ganhou anúncio de anime, e depois quando o anime ficou disponível
