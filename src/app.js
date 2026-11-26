@@ -636,7 +636,7 @@ function montarBuscaCatalogo(root, inicial, aoEscolher) {
     res.innerHTML = lista.length ? lista.map((r, i) => `
       <button type="button" class="catitem" data-i="${i}">
         ${r.capa ? `<img src="${esc(r.capa)}" alt="" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
-        <span class="ct"><b>${esc(r.original)}</b>${r.ingles && norm(r.ingles) !== norm(r.original) ? `<small>${esc(r.ingles)}</small>` : ""}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
+        <span class="ct">${nomesBusca(r, termo)}<em>${esc(r.tipo)}${r.generos.length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
       </button>`).join("") + `<div class="hint">Não achou? Preencha manualmente abaixo.</div>`
       : `<div class="hint">Nada encontrado no catálogo. Você pode preencher manualmente abaixo.</div>`;
     res.querySelectorAll("[data-i]").forEach(b => b.onclick = async () => {
@@ -798,6 +798,7 @@ function render() {
   if (Math.abs(window.scrollY - yAntes) > 1) window.scrollTo(0, yAntes);
   novos.forEach(n => n.addEventListener("animationend", () => n.classList.remove("entra"), { once: true }));
   novos.flatMap(n => [...n.querySelectorAll("img[data-fallback]")]).forEach(img => img.addEventListener("error", () => {
+    if (img.dataset.md === "tentando") return;   // capa do MangaDex: o app ainda vai tentar abrir por outro caminho
     const card = img.closest(".card"); const it = card && source().get(card.dataset.id);
     const cov = img.parentElement;
     img.outerHTML = phHTML(it ? it.title : "?");
@@ -1566,9 +1567,9 @@ function openInfo(mid) {
     <div class="mbody">
       ${it.catId ? `<div id="catInfo" class="catinfo"><div class="hint">Carregando informações do catálogo…</div></div>` : ""}
       <div class="infogrid">
-        <div class="ibox"><small>${visit ? "NOTA DE @" + esc(visit.apelido).toUpperCase() : "SUA NOTA"}</small><b>${nota ? "⭐ " + fmtNota(nota) : "—"}</b></div>
+        <div class="ibox"><small>${visit ? "NOTA DE @" + esc(visit.apelido).toUpperCase() : "SUA NOTA"}</small><b>${nota ? fmtNota(nota) : "—"}</b></div>
         <div class="ibox"><small>LEU ATÉ O CAP.</small><b>${fmtCap(it.chapter)}</b></div>
-        <div class="ibox"><small>STATUS</small><b class="st"><span class="badge s-${stOf(it)}" style="position:static"><i></i>${STATUS[stOf(it)].label}</span></b></div>
+        <div class="ibox"><small>STATUS</small><b>${STATUS[stOf(it)].label}</b></div>
       </div>
       <div class="comment">${it.comentario ? "💬 " + esc(it.comentario) : `<span class="hint">Sem comentário.</span>`}</div>
       ${lk ? `<a class="btn" href="${esc(lk)}" target="_blank" rel="noopener noreferrer" ${visit ? "" : `data-seen="${esc(mid)}"`}>🔗 Abrir o site onde ${visit ? "ele lê" : "você lê"} ↗</a>` : ""}
@@ -2039,6 +2040,7 @@ async function adicionarObra(x, btn) {
 
 // ---------- Lupa: busca geral no catálogo (nomes em inglês, japonês, português, coreano e chinês) ----------
 async function buscaGeral(q) {
+  q = String(q || "").replace(/[\u2018\u2019\u201A\u2032`\u00B4]/g, "'").replace(/[\u201C\u201D\u201E]/g, '"').replace(/\s+/g, " ").trim();   // o teclado do celular troca ' por ’
   const [al, md] = await Promise.all([buscaAniList(q).catch(() => []), buscaMangaDex(q).catch(() => [])]);
   const r = al.slice();
   for (const x of md) {
@@ -2050,10 +2052,17 @@ async function buscaGeral(q) {
   if (!fim.length) { try { fim = await buscaMAL(q); } catch (e) {} }
   return fim.filter(x => !nomeSuspeito(x.original) && !nomeSuspeito(x.ingles || ""));
 }
+// lista de busca: nome principal e, embaixo, o nome que bateu com a busca (ou o segundo nome da obra)
+function nomesBusca(r, q) {
+  const nome = r.ingles || r.original;
+  const outro = nomeQueBateu(r, q) || [r.original, r.ingles, r.nativo].find(n => n && norm(n) !== norm(nome)) || "";
+  return `<b>${esc(nome)}</b>${outro && norm(outro) !== norm(nome) ? `<small>${esc(outro)}</small>` : ""}`;
+}
 function nomeQueBateu(r, q) {   // quando a busca achou por outro nome (ex.: o nome em português), mostra qual
-  const nq = norm(q), vistos = [r.ingles, r.original].map(norm);
+  const nb = (t) => norm(t).replace(/[\u2018\u2019`\u00B4]/g, "'").replace(/\s+/g, " ").trim();
+  const nq = nb(q), vistos = [r.ingles, r.original].map(nb); if (!nq) return "";
   const todos = [r.nomePT, r.nativo, ...(r.sinonimos || []), ...(r.outros || [])].filter(Boolean);
-  return todos.find(n => norm(n).includes(nq) && !vistos.includes(norm(n))) || "";
+  return todos.find(n => nb(n).includes(nq) && !vistos.includes(nb(n))) || "";
 }
 function openLupa() {
   openModal(`
@@ -2068,11 +2077,10 @@ function openLupa() {
     setTimeout(() => inp.focus(), 60);
     const draw = (q) => {
       box.innerHTML = lista.length ? lista.map((r, i) => {
-        const nome = r.ingles || r.original, outro = [r.original, r.ingles, r.nativo].find(n => n && norm(n) !== norm(nome)) || "";
-        const bateu = nomeQueBateu(r, q), x = { chave: r.key, catId: r.key, titulo: nome, capa: r.capa };
+        const nome = r.ingles || r.original, x = { chave: r.key, catId: r.key, titulo: nome, capa: r.capa };
         return `<div class="lpitem" data-i="${i}" role="button" tabindex="0">
           ${r.capa ? `<img src="${esc(r.capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="nocapa">?</span>`}
-          <span class="ct"><b>${esc(nome)}</b>${outro ? `<small>${esc(outro)}</small>` : ""}${bateu ? `<small class="bateu">Também conhecido como ${esc(bateu)}</small>` : ""}
+          <span class="ct">${nomesBusca(r, q)}
             <em>${esc(r.tipo || "Mangá")}${r.ano ? " · " + r.ano : ""}${(r.generos || []).length ? " · " + esc(r.generos.slice(0, 3).join(", ")) : ""}</em></span>
           ${naEstante(x) ? `<span class="mini rktem">✓ Na estante</span>` : `<button type="button" class="mini read" data-lpadd="${i}">+ Estante</button>`}
         </div>`;
@@ -3566,6 +3574,30 @@ function avisoCard(id, tipo) {
     };
   });
 }
+
+// ---------- capas do MangaDex no Android ----------
+// dentro do app Android as imagens do MangaDex não abrem pelo WebView; o app baixa pelo caminho nativo e mostra.
+// se mesmo assim não abrir, nas listas de busca aparece a inicial da obra no lugar do ícone quebrado.
+const capaMD = new Map();
+const iniciaisCapa = (img) => { const t = (img.closest("[data-i],.catchosen,.lpitem,.catitem") || {}).textContent || "?"; return esc(t.trim().charAt(0).toUpperCase() || "?"); };
+function capaReserva(img) {
+  if (!img.isConnected) return;
+  if (img.closest(".catitem,.lpitem,.catchosen")) img.outerHTML = `<span class="nocapa">${iniciaisCapa(img)}</span>`;
+  else if (img.dataset.md === "tentando") { img.dataset.md = "falhou"; img.dispatchEvent(new Event("error")); }
+}
+document.addEventListener("error", (e) => {
+  const img = e.target; if (!img || img.tagName !== "IMG" || img.dataset.md === "falhou") return;
+  const src = img.getAttribute("src") || "";
+  const nh = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
+  if (!/^https:\/\/uploads\.mangadex\.org\//.test(src) || !nh) { if (img.closest(".catitem,.lpitem,.catchosen")) capaReserva(img); return; }
+  if (img.dataset.md === "tentando") return;
+  img.dataset.md = "tentando";
+  const ja = capaMD.get(src);
+  const job = ja || nh.request({ url: src, method: "GET", responseType: "blob", headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Mobile Safari/537.36" } })
+    .then(r => { if (r.status >= 400 || typeof r.data !== "string" || r.data.length < 200) throw new Error("capa"); return "data:image/jpeg;base64," + r.data; });
+  if (!ja) { capaMD.set(src, job); job.catch(() => capaMD.delete(src)); }
+  job.then(d => { if (img.isConnected) { img.dataset.md = "ok"; img.src = d; } }).catch(() => capaReserva(img));
+}, true);
 
 // ---------- eventos ----------
 $("#grid").addEventListener("click", (e) => {

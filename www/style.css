@@ -221,7 +221,7 @@ html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-r
 .infogrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .ibox{border:var(--line);border-radius:8px;padding:8px;background:var(--paper);display:flex;flex-direction:column;gap:4px;min-width:0}
 .ibox small{font-size:9.5px;font-weight:800;color:var(--muted);letter-spacing:.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ibox b{font-family:Bangers,Impact,sans-serif;font-weight:400;font-size:24px;letter-spacing:1px;line-height:1.1}
+.ibox b{font-family:Bangers,Impact,sans-serif;font-weight:400;font-size:24px;letter-spacing:1px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ibox b.st{font-family:Inter,sans-serif;font-size:12px}
 .comment{background:var(--paper);border:2px dashed var(--muted);border-radius:8px;padding:10px 12px;line-height:1.45;font-size:14.5px;white-space:pre-wrap;word-break:break-word}
 .rrow{justify-content:space-between}
