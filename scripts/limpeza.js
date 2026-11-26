@@ -1,4 +1,4 @@
-// Limpeza diária do fórum: apaga mensagens e avisos (menções) com mais de 7 dias.
+// Limpeza diária do fórum: apaga mensagens (salas públicas e privadas) e avisos (menções) com mais de 7 dias.
 // Roda no GitHub junto com o ranking, todo dia de madrugada.
 const admin = require("firebase-admin");
 module.exports = async function limpar(db) {
@@ -6,6 +6,14 @@ module.exports = async function limpar(db) {
   let n = 0;
   for (const sala of ["geral", "rec", "spo"]) {
     const velhas = await db.collection("forum").doc(sala).collection("msgs").where("criadoEm", "<", limite).get();
+    let lote = db.batch(), k = 0;
+    for (const d of velhas.docs) { lote.delete(d.ref); n++; if (++k % 400 === 0) { await lote.commit(); lote = db.batch(); } }
+    if (k % 400) await lote.commit();
+  }
+  // salas privadas: mesma regra de 7 dias
+  const salas = await db.collection("salas").get();
+  for (const sd of salas.docs) {
+    const velhas = await sd.ref.collection("msgs").where("criadoEm", "<", limite).get();
     let lote = db.batch(), k = 0;
     for (const d of velhas.docs) { lote.delete(d.ref); n++; if (++k % 400 === 0) { await lote.commit(); lote = db.batch(); } }
     if (k % 400) await lote.commit();

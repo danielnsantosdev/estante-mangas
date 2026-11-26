@@ -11,7 +11,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch,
   query, where, addDoc, updateDoc, deleteField, orderBy, limit, serverTimestamp,
-  terminate, clearIndexedDbPersistence,
+  terminate, clearIndexedDbPersistence, arrayUnion, arrayRemove, documentId,
 } from "firebase/firestore";
 import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
 
@@ -35,7 +35,10 @@ let netState = { pendingWrites: false, fromCache: true };
 let savedSort = "recent"; try { savedSort = localStorage.getItem("estante-sort") || "recent"; } catch (e) {}
 const ui = { filter: "todos", q: "", sort: savedSort, visit: null };   // visit = estante de outra pessoa aberta
 let myProfile = null;            // { apelido, publico }
-let myAvisos = [], forumDnd = false;   // menções/respostas no fórum (sino) e "Não perturbe"
+let myAvisos = [], forumDnd = false;
+let amizades = [], minhasSalas = [], convitesSala = [];   // amigos e salas privadas
+const ouvintesSocial = new Set();
+const avisaSocial = () => ouvintesSocial.forEach(f => { try { f(); } catch (e) {} });   // menções/respostas no fórum (sino) e "Não perturbe"
 let myAvals = {};                // notas que visitantes deram nos MEUS mangás: { idMangá: { idVisitante: {nota, apelido, em} } }
 let extraUnsubs = [];
 $("#sort").value = ui.sort;
@@ -232,6 +235,15 @@ function startSync(uid) {
   }, () => {}));
   extraUnsubs.push(onSnapshot(collection(db, "users", uid, "avisos"), (snap) => {
     myAvisos = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.em || 0) - (a.em || 0)); updateBell();
+  }, () => {}));
+  extraUnsubs.push(onSnapshot(query(collection(db, "amizades"), where("uids", "array-contains", uid)), (snap) => {
+    amizades = snap.docs.map(d => ({ id: d.id, ...d.data() })); updateBell(); avisaSocial(); pintarAmigoVisita();
+  }, () => {}));
+  extraUnsubs.push(onSnapshot(query(collection(db, "salas"), where("membros", "array-contains", uid)), (snap) => {
+    minhasSalas = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.criadaEm || 0) - (b.criadaEm || 0)); updateBell(); avisaSocial();
+  }, () => {}));
+  extraUnsubs.push(onSnapshot(query(collection(db, "salas"), where("convidados", "array-contains", uid)), (snap) => {
+    convitesSala = snap.docs.map(d => ({ id: d.id, ...d.data() })); updateBell(); avisaSocial();
   }, () => {}));
   extraUnsubs.push(onSnapshot(doc(db, "users", uid, "config", "forum"), (d) => { forumDnd = !!(d.exists() && (d.data() || {}).dnd); updateBell(); }, () => {}));
   try { if (!localStorage.getItem(AVAL_KEY)) localStorage.setItem(AVAL_KEY, String(Date.now())); } catch (e) {}
@@ -760,7 +772,7 @@ function render() {
   $("#addBtn").classList.toggle("hidden", !!ui.visit);
   const vt = $("#vitrine"), vkey = ui.visit && !ui.visit.loading ? ui.visit.uid : "";
   vt.classList.toggle("hidden", !vkey);
-  if (vkey && vt.dataset.uid !== vkey) { vt.dataset.uid = vkey; vt.innerHTML = vitrineHTML(ui.visit.perfil || { apelido: ui.visit.apelido }, ui.visit.items, true); ligarVitrine(vt, ui.visit.items); }
+  if (vkey && vt.dataset.uid !== vkey) { vt.dataset.uid = vkey; vt.innerHTML = vitrineHTML(ui.visit.perfil || { apelido: ui.visit.apelido }, ui.visit.items, true); ligarVitrine(vt, ui.visit.items); pintarAmigoVisita(); }
   if (!vkey) { vt.dataset.uid = ""; vt.innerHTML = ""; }
   updateBell();
   const grid = $("#grid"), empty = $("#empty");
@@ -1302,7 +1314,7 @@ function juntarNotifs() {
 }
 function updateBell() {
   if (!$("#bellBtn") || !currentUser) return;
-  const n = juntarNotifs().itens.filter(x => !x.lida).length;
+  const n = juntarNotifs().itens.filter(x => !x.lida).length + pedidosRecebidos().length + convitesSala.length;
   $("#bellBtn").classList.remove("hidden");
   $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
   $("#bellCnt").classList.toggle("hidden", !n);
@@ -1321,9 +1333,25 @@ function openBell() {
   };
   openModal(`
     <div class="mhead"><h2>Notificações</h2><button type="button" class="icon-btn" data-x>✕</button></div>
-    <div class="mbody"><div class="ntabs"><span class="lbl">Novidades</span><span class="qt" id="nQt"></span><button type="button" class="nlimpar" id="nLimpar">Limpar</button></div><div class="nlist" id="nList"></div></div>`, (root) => {
+    <div class="mbody"><div class="nlist" id="nPend"></div><div class="ntabs"><span class="lbl">Novidades</span><span class="qt" id="nQt"></span><button type="button" class="nlimpar" id="nLimpar">Limpar</button></div><div class="nlist" id="nList"></div></div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     const box = root.querySelector("#nList"), bLimpar = root.querySelector("#nLimpar"), qt = root.querySelector("#nQt");
+    // pedidos de amizade e convites para sala: respondem direto aqui
+    const pend = root.querySelector("#nPend");
+    const pintaPend = () => {
+      if (!pend.isConnected) { ouvintesSocial.delete(pintaPend); return; }
+      pend.innerHTML = pedidosRecebidos().map(z => { const u = outroDe(z); return `<div class="ni npend">${avatarHTML(null, apDe(z, u), "amav")}<span class="nt"><b>@${esc(apDe(z, u))} quer ser seu amigo</b><small>Pedido de amizade</small></span><span class="nacts"><button type="button" class="btn sm" data-pz="${esc(z.id)}" data-r="0">Recusar</button><button type="button" class="btn primary sm" data-pz="${esc(z.id)}" data-r="1">Aceitar</button></span></div>`; }).join("")
+        + convitesSala.map(sx => { const ap = (sx.apelidos || {})[sx.dono] || "?"; return `<div class="ni npend">${avatarHTML(null, ap, "amav")}<span class="nt"><b>@${esc(ap)} te convidou para ${esc(sx.nome)}</b><small>Sala privada · ${(sx.membros || []).length} de ${SALA_MAX} pessoas</small></span><span class="nacts"><button type="button" class="btn sm" data-ps="${esc(sx.id)}" data-r="0">Recusar</button><button type="button" class="btn primary sm" data-ps="${esc(sx.id)}" data-r="1">Entrar</button></span></div>`; }).join("");
+      pend.classList.toggle("hidden", !pend.innerHTML);
+    };
+    pend.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-pz],[data-ps]"); if (!b) return; b.disabled = true;
+      const sim = b.dataset.r === "1";
+      if (b.dataset.pz) { const z = amizades.find(x => x.id === b.dataset.pz); if (z) await (sim ? aceitarAmizade(z) : desfazerAmizade(z, "Pedido recusado.")); }
+      else { const sx = convitesSala.find(x => x.id === b.dataset.ps); if (sx) { await responderConvite(sx, sim); if (sim && minhasSalas.length < SALAS_MAX) { forumEstado.sala = sx.id; } } }
+      b.disabled = false;
+    });
+    ouvintesSocial.add(pintaPend); pintaPend();
     const capa = (x) => x.capa ? `<img src="${esc(x.capa)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="ncapa-v">${x.tipo === "forum" ? "@" : esc((x.titulo || "?").trim().charAt(0).toUpperCase())}</span>`;
     const draw = () => {
       qt.textContent = String(L.itens.length); qt.classList.toggle("hidden", !L.itens.length); bLimpar.disabled = !L.itens.length;
@@ -1729,7 +1757,8 @@ function openPeople(tab = "perfil") {
         <form id="apForm" class="urlrow" autocomplete="off"><input name="ap" maxlength="20" placeholder="seu apelido (ex.: Daniel)" value="${esc(p.apelido || "")}"><button class="btn primary" type="submit">Salvar</button></form>
         <p class="hint">Letras e números, de 3 a 20, sem símbolos. Cada apelido é único (Daniel e daniel contam como o mesmo).</p>
         <label class="switch"><input type="checkbox" id="pubT" ${p.publico ? "checked" : ""} ${p.apelido ? "" : "disabled"}><span class="sl"></span><span>Perfil público <small>${p.publico ? "— outras pessoas podem achar e ver sua estante, e você entra no ranking" : "— ninguém encontra você e você não entra no ranking"}</small></span></label>
-      </div>`;
+      </div>
+      ${p.apelido && !offline ? `<div class="amsec" id="amBox"></div>` : ""}`;
   else if (tab === "pessoas") corpo = offline ? `<p class="hint">📴 Sem internet: a busca de pessoas precisa de conexão.</p>` : `
       <div class="sect">
         <div class="search" style="height:42px">🔍<input id="pq" type="search" placeholder="Buscar apelido…" autocomplete="off"></div>
@@ -1746,6 +1775,7 @@ function openPeople(tab = "perfil") {
     if (tab === "ranking" && !offline) montarRanking(root);
     if (tab === "forum") return offline ? undefined : montarForum(root);
     if (tab !== "perfil") return;
+    montarAmigos(root);
     const vtm = root.querySelector(".vitrine.mine");
     if (vtm) ligarVitrine(vtm, soVisiveis(), true);
     const ve = root.querySelector("#vtEdit"); if (ve) ve.onclick = openVitrineEdit;
@@ -2228,7 +2258,7 @@ async function adicionarObraPV(x, btn) {
 
 // ---------- Fórum: 3 salas, mensagens somem em 7 dias ----------
 const FORUM_SALAS = [{ k: "geral", n: "Sala geral", d: "Conversa livre sobre mangás" }, { k: "rec", n: "Sala de recomendações", d: "Peça e dê dicas de leitura" }, { k: "spo", n: "Sala de spoilers", d: "Tudo aqui fica coberto até tocar" }];
-const nomeSala = (k) => (FORUM_SALAS.find(x => x.k === k) || {}).n || k;
+const nomeSala = (k) => (FORUM_SALAS.find(x => x.k === k) || {}).n || ((minhasSalas || []).find(x => x.id === k) || {}).nome || "sala privada";
 const forumEstado = { sala: null };
 const forumPC = () => matchMedia("(min-width:760px)").matches;
 // Moderação: palavrões leves passam; pesados ganham asteriscos; ofensas a pessoas não são enviadas
@@ -2268,6 +2298,196 @@ const REGRAS_HTML = `<ol class="regras">
 function abrirRegras() {
   abrirFolha(`<div class="mhead"><h2 class="fh">Regras da comunidade</h2><button type="button" class="icon-btn" data-fx>✕</button></div><div class="mbody">${REGRAS_HTML}</div>`);
 }
+// ---------- amigos ----------
+const outroDe = (z) => (z.uids || []).find(u => u !== currentUser.uid) || "";
+const apDe = (z, uid) => ((z && z.apelidos) || {})[uid] || "?";
+const amigos = () => amizades.filter(z => z.status === "aceita");
+const amizadeCom = (uid) => amizades.find(z => (z.uids || []).includes(uid));
+const pedidosRecebidos = () => amizades.filter(z => z.status === "pendente" && z.de !== currentUser.uid);
+async function pedirAmizade(uid, ap) {
+  if (!myProfile || !myProfile.apelido) { toast("Crie seu apelido em Meu perfil primeiro.", 3500); return false; }
+  if (!uid || uid === currentUser.uid) return false;
+  const me = currentUser.uid, ids = [me, uid].sort();
+  try {
+    await setDoc(doc(db, "amizades", ids.join("_")), { uids: ids, de: me, status: "pendente", apelidos: { [me]: myProfile.apelido, [uid]: String(ap || "?").slice(0, 30) }, em: Date.now() });
+    toast("Pedido enviado para @" + ap); return true;
+  } catch (e) { toast("Não foi possível enviar agora. Verifique a internet."); return false; }
+}
+async function aceitarAmizade(z) {
+  try { await updateDoc(doc(db, "amizades", z.id), { status: "aceita", [`apelidos.${currentUser.uid}`]: (myProfile && myProfile.apelido) || "?", em: Date.now() }); toast(`Você e @${apDe(z, outroDe(z))} agora são amigos.`); }
+  catch (e) { toast("Não foi possível agora. Verifique a internet."); }
+}
+async function desfazerAmizade(z, msg) {
+  try { await deleteDoc(doc(db, "amizades", z.id)); if (msg) toast(msg); } catch (e) { toast("Não foi possível agora. Verifique a internet."); }
+}
+function pintarAmigoVisita() {
+  const el = document.querySelector("#vtAmigo"); if (!el || !ui.visit || !currentUser) return;
+  const uid = ui.visit.uid, ap = ui.visit.apelido, z = amizadeCom(uid);
+  if (uid === currentUser.uid) { el.innerHTML = ""; return; }
+  el.innerHTML = !z ? `<button type="button" class="btn primary" data-am="pedir">Adicionar amigo</button>`
+    : z.status === "aceita" ? `<span class="amok">Amigos ✓</span>`
+    : z.de === currentUser.uid ? `<button type="button" class="btn" data-am="cancelar">Pedido enviado · cancelar</button>`
+    : `<button type="button" class="btn primary" data-am="aceitar">Aceitar pedido</button>`;
+  el.onclick = async (e) => {
+    const b = e.target.closest("[data-am]"); if (!b) return; b.disabled = true;
+    const a = b.dataset.am;
+    if (a === "pedir") await pedirAmizade(uid, ap); else if (a === "cancelar") await desfazerAmizade(z, "Pedido cancelado."); else await aceitarAmizade(z);
+    b.disabled = false;
+  };
+}
+// Meu perfil › Amigos: lista, pedidos e busca por @apelido
+function montarAmigos(root) {
+  const box = root.querySelector("#amBox"); if (!box) return;
+  const me = currentUser.uid;
+  let sel = null, achados = [], t = null, seq = 0, conf = null;
+  box.innerHTML = `<div class="amh"><span>Amigos</span><small id="amN"></small></div>
+    <div class="amin"><div class="ambusca"><input id="amQ" placeholder="@apelido" autocomplete="off" autocapitalize="off" spellcheck="false"><div id="amSug" class="amsug"></div></div><div id="amLista" class="amlista"></div></div>`;
+  const inp = box.querySelector("#amQ"), sug = box.querySelector("#amSug"), lista = box.querySelector("#amLista");
+  const linhaSug = (x) => {
+    const z = amizadeCom(x.uid);
+    const estado = x.uid === me ? `<small class="amest">Você</small>` : z ? `<small class="amest">${z.status === "aceita" ? "Amigos ✓" : z.de === me ? "Pedido enviado" : "Pediu sua amizade"}</small>`
+      : sel === x.uid ? `<button type="button" class="btn primary sm" data-env="${esc(x.uid)}">Enviar pedido</button>` : "";
+    return `<div class="amsgi ${sel === x.uid ? "on" : ""}" data-sel="${esc(x.uid)}">${avatarHTML(null, x.ap, "amav")}<b>@${esc(x.ap)}</b>${estado}</div>`;
+  };
+  const pintaSug = () => { sug.innerHTML = achados.length ? achados.map(linhaSug).join("") : inp.value.trim().length >= 2 ? `<p class="hint" style="padding:8px 10px">Ninguém com esse apelido.</p>` : ""; sug.classList.toggle("hidden", !sug.innerHTML); };
+  const buscar = async () => {
+    const q = apKey(inp.value.trim().replace(/^@/, "")); clearTimeout(t);
+    if (q.length < 2) { achados = []; pintaSug(); return; }
+    const meu = ++seq;
+    try {
+      const sn = await getDocs(query(collection(db, "apelidos"), where(documentId(), ">=", q), where(documentId(), "<", q + ""), limit(8)));
+      if (meu !== seq) return;
+      achados = sn.docs.map(d => ({ ap: d.id, uid: (d.data() || {}).uid })).filter(x => x.uid);
+    } catch (e) {
+      try { const d = await getDoc(doc(db, "apelidos", q)); achados = d.exists() ? [{ ap: q, uid: (d.data() || {}).uid }] : []; } catch (e2) { achados = []; }
+    }
+    sel = null; pintaSug();
+  };
+  inp.addEventListener("input", () => { clearTimeout(t); t = setTimeout(buscar, 350); });
+  sug.addEventListener("click", async (e) => {
+    const env = e.target.closest("[data-env]");
+    if (env) { const x = achados.find(y => y.uid === env.dataset.env); env.disabled = true; if (x && await pedirAmizade(x.uid, x.ap)) { sel = null; inp.value = ""; achados = []; pintaSug(); } else env.disabled = false; return; }
+    const r = e.target.closest("[data-sel]"); if (!r || r.dataset.sel === me || amizadeCom(r.dataset.sel)) return;
+    sel = r.dataset.sel; pintaSug();
+  });
+  const pinta = () => {
+    if (!box.isConnected) { ouvintesSocial.delete(pinta); return; }
+    const ok = amigos(), receb = pedidosRecebidos(), env = amizades.filter(z => z.status === "pendente" && z.de === me);
+    box.querySelector("#amN").textContent = ok.length ? String(ok.length) : "";
+    lista.innerHTML = receb.map(z => { const u = outroDe(z); return `<div class="amrow">${avatarHTML(null, apDe(z, u), "amav")}<span class="tx"><b>@${esc(apDe(z, u))}</b><small>Quer ser seu amigo</small></span><button type="button" class="btn sm" data-rec="${esc(z.id)}">Recusar</button><button type="button" class="btn primary sm" data-ace="${esc(z.id)}">Aceitar</button></div>`; }).join("")
+      + ok.map(z => { const u = outroDe(z), ap = apDe(z, u); return `<div class="amrow" data-vis="${esc(u)}" data-ap="${esc(ap)}">${avatarHTML(null, ap, "amav")}<span class="tx"><b>@${esc(ap)}</b></span>${conf === z.id ? `<button type="button" class="btn sm" data-nao="1">Não</button><button type="button" class="btn sm amdel" data-rm="${esc(z.id)}">Remover amigo</button>` : `<button type="button" class="btn sm ammais" data-conf="${esc(z.id)}" aria-label="Opções">⋯</button>`}</div>`; }).join("")
+      + (!ok.length && !receb.length ? `<p class="hint">Você ainda não tem amigos. Busque pelo @apelido acima.</p>` : "")
+      + env.map(z => `<p class="hint amenv">Pedido enviado para @${esc(apDe(z, outroDe(z)))} · <button type="button" class="linkbtn" data-can="${esc(z.id)}">cancelar</button></p>`).join("");
+  };
+  lista.addEventListener("click", async (e) => {
+    const g = (k) => { const b = e.target.closest(`[data-${k}]`); return b ? amizades.find(z => z.id === b.dataset[k]) : null; };
+    let z;
+    if ((z = g("ace"))) { await aceitarAmizade(z); return; }
+    if ((z = g("rec"))) { await desfazerAmizade(z, "Pedido recusado."); return; }
+    if ((z = g("can"))) { await desfazerAmizade(z, "Pedido cancelado."); return; }
+    if ((z = g("rm"))) { conf = null; await desfazerAmizade(z, "Amigo removido."); return; }
+    if ((z = g("conf"))) { conf = z.id; pinta(); return; }
+    if (e.target.closest("[data-nao]")) { conf = null; pinta(); return; }
+    const v = e.target.closest("[data-vis]"); if (v) openVisit(v.dataset.vis, v.dataset.ap);
+  });
+  ouvintesSocial.add(pinta); pinta();
+}
+// ---------- salas privadas ----------
+const ehPublica = (k) => FORUM_SALAS.some(x => x.k === k);
+const salaPriv = (k) => minhasSalas.find(x => x.id === k);
+const colMsgs = (k) => ehPublica(k) ? collection(db, "forum", k, "msgs") : collection(db, "salas", k, "msgs");
+const todasSalas = () => [...FORUM_SALAS, ...minhasSalas.map(x => ({ k: x.id, n: x.nome, d: `${(x.membros || []).length} ${(x.membros || []).length === 1 ? "pessoa" : "pessoas"}`, priv: true }))];
+const SALA_MAX = 15, SALAS_MAX = 3;
+function escolherAmigos(titulo, jaNaSala, vagas, botao, aoEscolher, comNome) {
+  const lista = amigos().map(z => ({ uid: outroDe(z), ap: apDe(z, outroDe(z)) })).filter(x => !jaNaSala.includes(x.uid));
+  const sel = new Set();
+  abrirFolha(`<form id="esF" autocomplete="off"><div class="mhead"><h2 class="fh">${titulo}</h2><button type="button" class="icon-btn" data-fx>✕</button></div><div class="mbody">
+    ${comNome ? `<label class="ecol"><span class="elbl">Nome da sala</span><input class="einp" name="nome" maxlength="40" placeholder="Ex.: Caçadores de Sábado"></label>` : ""}
+    <div class="ecol"><span class="elbl" id="esCnt"></span><div class="eslista">${lista.length ? lista.map(x => `<button type="button" class="eschk" data-u="${esc(x.uid)}"><span class="bx"></span>${avatarHTML(null, x.ap, "amav")}<b>@${esc(x.ap)}</b></button>`).join("") : `<p class="hint">${amigos().length ? "Todos os seus amigos já estão nesta sala." : "Você ainda não tem amigos. Adicione em Meu perfil › Amigos."}</p>`}</div></div>
+    ${comNome ? `<p class="hint">Você está em ${minhasSalas.length} de ${SALAS_MAX} salas.</p>` : ""}</div>
+    <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-fx>Cancelar</button><button type="submit" class="btn primary">${botao}</button></div></form>`, (f) => {
+    const cnt = f.querySelector("#esCnt");
+    const conta = () => { cnt.textContent = `Convidar amigos · ${SALA_MAX - vagas + sel.size} de ${SALA_MAX} pessoas`; };
+    conta();
+    f.querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
+      const u = b.dataset.u;
+      if (sel.has(u)) sel.delete(u); else { if (sel.size >= vagas) { toast(`A sala pode ter no máximo ${SALA_MAX} pessoas.`); return; } sel.add(u); }
+      b.classList.toggle("on", sel.has(u)); b.querySelector(".bx").textContent = sel.has(u) ? "✓" : ""; conta();
+    });
+    f.querySelector("#esF").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const nome = comNome ? String(f.querySelector("[name=nome]").value || "").trim().replace(/\s+/g, " ") : "";
+      if (comNome && nome.length < 2) { toast("Dê um nome para a sala."); return; }
+      if (comNome && moderar(nome).erro) { toast("Esse nome não é permitido. Escolha outro."); return; }
+      const escolhidos = lista.filter(x => sel.has(x.uid));
+      if (!comNome && !escolhidos.length) { toast("Escolha pelo menos um amigo."); return; }
+      const sb = f.querySelector("[type=submit]"); sb.disabled = true;
+      const ok = await aoEscolher(escolhidos, nome); sb.disabled = false;
+      if (ok) fecharFolha();
+    });
+  });
+}
+function criarSala() {
+  if (!myProfile || !myProfile.apelido) { toast("Crie seu apelido em Meu perfil primeiro.", 3500); return; }
+  if (minhasSalas.length >= SALAS_MAX) { toast(`Você já está em ${SALAS_MAX} salas. Saia de uma para criar outra.`, 4000); return; }
+  escolherAmigos("Criar sala", [], SALA_MAX - 1, "Criar e convidar", async (esc2, nome) => {
+    const me = currentUser.uid, apelidos = { [me]: myProfile.apelido };
+    esc2.forEach(x => { apelidos[x.uid] = x.ap; });
+    try {
+      const r = await addDoc(collection(db, "salas"), { nome, dono: me, membros: [me], convidados: esc2.map(x => x.uid), apelidos, criadaEm: Date.now() });
+      forumEstado.sala = r.id; toast(esc2.length ? "Sala criada. Os convites foram enviados." : "Sala criada."); return true;
+    } catch (e) { toast("Não foi possível criar agora. Verifique a internet."); return false; }
+  }, true);
+}
+function convidarParaSala(s) {
+  const ja = [...(s.membros || []), ...(s.convidados || [])], vagas = SALA_MAX - ja.length;
+  if (vagas <= 0) { toast(`A sala já tem ${SALA_MAX} pessoas (contando os convites).`); return; }
+  escolherAmigos("Convidar amigos", ja, vagas, "Convidar", async (esc2) => {
+    const up = { convidados: arrayUnion(...esc2.map(x => x.uid)) };
+    esc2.forEach(x => { up[`apelidos.${x.uid}`] = x.ap; });
+    try { await updateDoc(doc(db, "salas", s.id), up); toast("Convites enviados."); return true; }
+    catch (e) { toast("Não foi possível convidar agora."); return false; }
+  });
+}
+function renomearSala(s) {
+  abrirFolha(`<form id="rnF" autocomplete="off"><div class="mhead"><h2 class="fh">Renomear sala</h2><button type="button" class="icon-btn" data-fx>✕</button></div>
+    <div class="mbody"><label class="ecol"><span class="elbl">Nome da sala</span><input class="einp" name="nome" maxlength="40" value="${esc(s.nome)}"></label></div>
+    <div class="mfoot"><span class="grow"></span><button type="button" class="btn ghost" data-fx>Cancelar</button><button type="submit" class="btn primary">Salvar</button></div></form>`, (f) => {
+    f.querySelector("#rnF").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const nome = String(f.querySelector("[name=nome]").value || "").trim().replace(/\s+/g, " ");
+      if (nome.length < 2) { toast("Dê um nome para a sala."); return; }
+      if (moderar(nome).erro) { toast("Esse nome não é permitido. Escolha outro."); return; }
+      try { await updateDoc(doc(db, "salas", s.id), { nome }); fecharFolha(); toast("Sala renomeada."); } catch (x) { toast("Não foi possível agora."); }
+    });
+  });
+}
+async function sairDaSala(s) {
+  const me = currentUser.uid, resto = (s.membros || []).filter(u => u !== me);
+  try {
+    if (s.dono !== me) await updateDoc(doc(db, "salas", s.id), { membros: arrayRemove(me) });
+    else if (resto.length) await updateDoc(doc(db, "salas", s.id), { membros: resto, dono: resto[0] });
+    else { await apagarSala(s, true); return; }
+    toast("Você saiu da sala.");
+  } catch (e) { toast("Não foi possível sair agora."); }
+}
+async function apagarSala(s, quieto) {
+  try {
+    const sn = await getDocs(collection(db, "salas", s.id, "msgs"));
+    for (let i = 0; i < sn.docs.length; i += 400) { const b = writeBatch(db); sn.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit(); }
+    await deleteDoc(doc(db, "salas", s.id));
+    toast(quieto ? "Você saiu e a sala foi apagada." : "Sala apagada.");
+  } catch (e) { toast("Não foi possível apagar agora."); }
+}
+async function responderConvite(s, entrar) {
+  const me = currentUser.uid;
+  if (entrar && minhasSalas.length >= SALAS_MAX) { toast(`Você já está em ${SALAS_MAX} salas. Saia de uma para entrar nesta.`, 4500); return; }
+  if (entrar && (s.membros || []).length >= SALA_MAX) { toast("Essa sala já está cheia."); return; }
+  try {
+    if (entrar) { await updateDoc(doc(db, "salas", s.id), { membros: arrayUnion(me), convidados: arrayRemove(me), [`apelidos.${me}`]: (myProfile && myProfile.apelido) || "?" }); toast(`Você entrou na sala ${s.nome}.`); }
+    else { await updateDoc(doc(db, "salas", s.id), { convidados: arrayRemove(me) }); toast("Convite recusado."); }
+  } catch (e) { toast("Não foi possível agora. Verifique a internet."); }
+}
 const REGRAS_KEY = () => "estante-regras-ok-" + (currentUser ? currentUser.uid : "");
 let regrasOk = null;
 async function regrasAceitas() {
@@ -2286,17 +2506,17 @@ function pedirRegras(box, depois) {   // primeira entrada no fórum: lê e conco
 }
 // sininho de cada sala: as públicas começam desligadas
 const SINOS_KEY = () => "estante-forum-sinos-" + (currentUser ? currentUser.uid : "");
-const sinoLigado = (k) => !!lerJSON(SINOS_KEY(), {})[k];
-function trocarSino(k) { const v = lerJSON(SINOS_KEY(), {}); v[k] = !v[k]; salvarJSON(SINOS_KEY(), v); return v[k]; }
+const sinoLigado = (k) => { const v = lerJSON(SINOS_KEY(), {}); return k in v ? !!v[k] : !ehPublica(k); };   // privadas começam ligadas
+function trocarSino(k) { const v = lerJSON(SINOS_KEY(), {}); v[k] = !sinoLigado(k); salvarJSON(SINOS_KEY(), v); return v[k]; }
 let forumNovas = {}, forumConferido = 0;
 async function conferirSalas(forcar) {   // conta mensagens novas das salas com o sininho ligado
   if (!currentUser || forumDnd || !navigator.onLine || (!forcar && Date.now() - forumConferido < 4 * 60e3)) return;
   forumConferido = Date.now();
   const visto = vistoLer(), novo = {};
-  for (const x of FORUM_SALAS) {
+  for (const x of todasSalas()) {
     if (!sinoLigado(x.k)) continue;
     try {
-      const sn = await getDocs(query(collection(db, "forum", x.k, "msgs"), orderBy("criadoEm", "desc"), limit(20)));
+      const sn = await getDocs(query(colMsgs(x.k), orderBy("criadoEm", "desc"), limit(20)));
       const ms = sn.docs.map(d => d.data()).filter(m => (m.criadoEm || 0) > (visto[x.k] || 0) && m.uid !== currentUser.uid && !m.apagada);
       if (ms.length) novo[x.k] = { n: ms.length, desde: visto[x.k] || 0, ultimo: ms[0].criadoEm || Date.now() };
     } catch (e) {}
@@ -2307,13 +2527,17 @@ setInterval(() => { if (document.visibilityState === "visible") conferirSalas();
 const ICO_SINO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
 function montarForum(root) {
   const box = root.querySelector("#forum"), me = currentUser.uid;
-  const msgs = { geral: [], rec: [], spo: [] }, unsubs = [];
+  const msgs = { geral: [], rec: [], spo: [] }, unsubs = [], subs = new Map();
+  let membrosAberto = false, confirma = "";
   let silAte = 0, espera = 0, esperaT = null, resp = null, spoiler = false, gifAberto = false, rascunho = "";
   if (!forumEstado.sala && forumPC()) forumEstado.sala = "geral";
-  const naoLidas = (k) => { const v = vistoLer()[k] || 0; return msgs[k].filter(m => (m.criadoEm || 0) > v && m.uid !== me).length; };
-  const salasHTML = () => `<div class="fsalas"><div class="fsalash">Salas</div>${FORUM_SALAS.map(x => {
-      const u = msgs[x.k][msgs[x.k].length - 1], n = forumEstado.sala === x.k ? 0 : naoLidas(x.k);
-      return `<button type="button" class="fsala ${forumEstado.sala === x.k ? "on" : ""}" data-sala="${x.k}"><b>${x.n}${sinoLigado(x.k) ? `<span class="fsinomini">${ICO_SINO}</span>` : ""}${n ? `<span class="fnlid">${n > 99 ? "99+" : n}</span>` : ""}</b><small>${x.d}</small>${!forumPC() && u ? `<span class="fult">@${esc(u.apelido)}: ${u.apagada ? "mensagem apagada" : u.spoiler ? "Spoiler" : u.gif && !u.texto ? "GIF" : esc(u.texto)}</span>` : ""}</button>`; }).join("")}
+  const naoLidas = (k) => { const v = vistoLer()[k] || 0; return (msgs[k] || []).filter(m => (m.criadoEm || 0) > v && m.uid !== me).length; };
+  const salaBtn = (x) => {
+      const l = msgs[x.k] || [], u = l[l.length - 1], n = forumEstado.sala === x.k ? 0 : naoLidas(x.k);
+      return `<button type="button" class="fsala ${forumEstado.sala === x.k ? "on" : ""}" data-sala="${esc(x.k)}"><b>${esc(x.n)}${x.priv ? `<span class="fpriv">Privada</span>` : ""}${sinoLigado(x.k) ? `<span class="fsinomini">${ICO_SINO}</span>` : ""}${n ? `<span class="fnlid">${n > 99 ? "99+" : n}</span>` : ""}</b><small>${esc(x.d)}</small>${!forumPC() && u ? `<span class="fult">@${esc(u.apelido)}: ${u.apagada ? "mensagem apagada" : u.spoiler ? "Spoiler" : u.gif && !u.texto ? "GIF" : esc(u.texto)}</span>` : ""}</button>`; };
+  const salasHTML = () => `<div class="fsalas"><div class="fsalash">Salas</div>${FORUM_SALAS.map(salaBtn).join("")}
+    <div class="fsalash fminhas">Minhas salas <small>${minhasSalas.length} de ${SALAS_MAX}</small></div>${todasSalas().filter(x => x.priv).map(salaBtn).join("")}
+    ${minhasSalas.length < SALAS_MAX ? `<button type="button" class="btn primary fcriar" data-c="criar">+ Criar sala</button>` : ""}
     <div class="fsalasfoot"><label class="fsw"><input type="checkbox" id="fDnd" ${forumDnd ? "checked" : ""}><span class="fsl"></span><span>Não perturbe<small>Sem avisos do fórum no sino</small></span></label><button type="button" class="fregras" id="fRegras">Regras da comunidade</button></div></div>`;
   const msgHTML = (m) => {
     if (m.apagada) return `<div class="fmsg apagada"><span class="fav" style="background:#bbb"></span><div class="fmc"><div class="fbal">Mensagem apagada pelo administrador.</div></div></div>`;
@@ -2328,7 +2552,7 @@ function montarForum(root) {
       </div><div class="facoes"><button type="button" data-a="resp">Responder</button>${m.uid !== me ? `<button type="button" data-a="den">Denunciar</button>` : ""}</div></div>`;
   };
   const listaHTML = () => {
-    const l = msgs[forumEstado.sala]; let dia = "", out = "";
+    const l = msgs[forumEstado.sala] || []; let dia = "", out = "";
     for (const m of l) { const d = diaDe(m.criadoEm); if (d !== dia) { dia = d; out += `<div class="fdia">${d}</div>`; } out += msgHTML(m); }
     return out || `<p class="fvazio">Nenhuma mensagem ainda. Comece a conversa!</p>`;
   };
@@ -2345,8 +2569,25 @@ function montarForum(root) {
         <button type="button" class="fbt env" data-c="env" ${espera ? "disabled" : ""}>${espera ? `Aguarde ${espera}s` : "Enviar"}</button></div>
       <div class="finfo"><span class="fst"></span><span class="fextra2">${temGif ? `<button type="button" class="fbt ${gifAberto ? "on" : ""}" data-c="gif">GIF</button>` : ""}${spo ? "" : `<button type="button" class="fbt ${spoiler ? "on" : ""}" data-c="spo">Spoiler</button>`}</span><span class="fcnt">${rascunho.length}/500</span></div></div>`;
   };
-  const convHTML = () => `<div class="fconv"><div class="fconvh">${forumPC() ? "" : `<button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>`}<b>${esc(nomeSala(forumEstado.sala))}</b><small>Mensagens somem 7 dias depois</small><button type="button" class="fsino ${sinoLigado(forumEstado.sala) ? "on" : ""}" data-c="sino" title="Avisar no sino">${ICO_SINO}${sinoLigado(forumEstado.sala) ? "Avisos ligados" : "Avisos desligados"}</button></div>
-    <div class="fmsgs">${listaHTML()}</div>${compHTML()}</div>`;
+  const membrosHTML = (sp) => {
+    const sou = sp.dono === me;
+    const ms = (sp.membros || []).map(u => { const ap = (sp.apelidos || {})[u] || "?", adm = u === sp.dono;
+      return `<div class="fmemb ${adm ? "adm" : ""}">${avatarHTML(null, ap, "amav")}<b>@${esc(ap)}</b>${adm ? `<small>administrador</small>` : ""}${sou && !adm ? (confirma === "rm:" + u ? `<button type="button" class="fmb amdel" data-c="rmsim" data-u="${esc(u)}">Remover</button>` : `<button type="button" class="fmb" data-c="rm" data-u="${esc(u)}" aria-label="Remover">✕</button>`) : ""}</div>`; }).join("");
+    const conv = (sp.convidados || []).length ? `<p class="fhint" style="padding:4px 14px 0">Convidados aguardando: ${(sp.convidados || []).map(u => "@" + esc((sp.apelidos || {})[u] || "?")).join(", ")}</p>` : "";
+    return `<div class="fmembros">${ms}${conv}<div class="fmacoes">
+      ${sou ? `<button type="button" data-c="convidar">+ Convidar amigos</button><button type="button" data-c="renomear">Renomear sala</button>` : ""}
+      <button type="button" class="red" data-c="sair">${confirma === "sair" ? (sou && (sp.membros || []).length > 1 ? "Sair mesmo? A sala passa para @" + esc((sp.apelidos || {})[(sp.membros || []).find(u => u !== me)] || "?") : "Sair mesmo?") : "Sair da sala"}</button>
+      ${sou ? `<button type="button" class="red" data-c="apagar">${confirma === "apagar" ? "Apagar a sala e as mensagens?" : "Apagar sala"}</button>` : ""}</div></div>`;
+  };
+  const convHTML = () => {
+    const k = forumEstado.sala, sp = salaPriv(k);
+    const sino = `<button type="button" class="fsino ${sinoLigado(k) ? "on" : ""}" data-c="sino" title="Avisar no sino">${ICO_SINO}${sinoLigado(k) ? "Avisos ligados" : "Avisos desligados"}</button>`;
+    const nMemb = sp ? (sp.membros || []).length : 0;
+    const head = !sp ? `<div class="fconvh">${forumPC() ? "" : `<button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>`}<b>${esc(nomeSala(k))}</b><small>Mensagens somem 7 dias depois</small>${sino}</div>`
+      : forumPC() ? `<div class="fconvh"><b>${esc(sp.nome)}</b>${sino}<button type="button" class="fsino ${membrosAberto ? "on" : ""}" data-c="membros">Membros · ${nMemb}</button></div>`
+      : `<div class="fconvh fconvh3"><div class="l1"><button type="button" class="fvoltar" data-c="voltar">‹ Salas</button>${sino}</div><b>${esc(sp.nome)}</b><button type="button" class="fmembn" data-c="membros">${nMemb} ${nMemb === 1 ? "membro" : "membros"} ${membrosAberto ? "▴" : "▾"}</button></div>`;
+    return `<div class="fconv">${head}${sp && membrosAberto ? membrosHTML(sp) : ""}
+    <div class="fmsgs">${listaHTML()}</div>${compHTML()}</div>`; };
   const pintaLista = () => {
     const ms = box.querySelector(".fmsgs"); if (!ms) return;
     const noFim = ms.scrollHeight - ms.scrollTop - ms.clientHeight < 80;
@@ -2409,7 +2650,7 @@ function montarForum(root) {
     if (gif) m.gif = String(gif).slice(0, 600);
     if (resp) m.resp = { uid: resp.uid, apelido: String(resp.apelido || "").slice(0, 30), trecho: String(resp.trecho || "").slice(0, 120) };
     const b = writeBatch(db);
-    b.set(doc(collection(db, "forum", sala, "msgs")), m);
+    b.set(doc(colMsgs(sala)), m);
     b.set(doc(db, "forumUsers", me), { ultima: serverTimestamp() }, { merge: true });
     comeca5s();
     const alvoResp = resp; rascunho = ""; resp = null; spoiler = false; gifAberto = false; desenha();
@@ -2429,7 +2670,7 @@ function montarForum(root) {
   }
   box.addEventListener("click", (e) => {
     const sp = e.target.closest(".fspo"); if (sp && !sp.classList.contains("ver")) { sp.classList.add("ver"); return; }
-    const s = e.target.closest("[data-sala]"); if (s) { forumEstado.sala = s.dataset.sala; resp = null; rascunho = ""; gifAberto = false; desenha(); return; }
+    const s = e.target.closest("[data-sala]"); if (s) { forumEstado.sala = s.dataset.sala; resp = null; rascunho = ""; gifAberto = false; membrosAberto = false; confirma = ""; desenha(); return; }
     const a = e.target.closest("[data-a]");
     if (a) {
       const m = msgDe(a.closest("[data-id]").dataset.id); if (!m) return;
@@ -2450,7 +2691,16 @@ function montarForum(root) {
     const c = e.target.closest("[data-c]");
     if (c) {
       const k = c.dataset.c;
-      if (k === "voltar") { forumEstado.sala = null; desenha(); }
+      const sp = salaPriv(forumEstado.sala);
+      if (k === "voltar") { forumEstado.sala = null; membrosAberto = false; confirma = ""; desenha(); }
+      else if (k === "criar") criarSala();
+      else if (k === "membros") { membrosAberto = !membrosAberto; confirma = ""; desenha(); }
+      else if (sp && k === "convidar") convidarParaSala(sp);
+      else if (sp && k === "renomear") renomearSala(sp);
+      else if (sp && k === "rm") { confirma = "rm:" + c.dataset.u; desenha(); }
+      else if (sp && k === "rmsim") { confirma = ""; updateDoc(doc(db, "salas", sp.id), { membros: arrayRemove(c.dataset.u) }).then(() => toast("Membro removido.")).catch(() => toast("Não foi possível agora.")); }
+      else if (sp && k === "sair") { if (confirma !== "sair") { confirma = "sair"; desenha(); } else { confirma = ""; membrosAberto = false; forumEstado.sala = forumPC() ? "geral" : null; sairDaSala(sp); } }
+      else if (sp && k === "apagar") { if (confirma !== "apagar") { confirma = "apagar"; desenha(); } else { confirma = ""; membrosAberto = false; forumEstado.sala = forumPC() ? "geral" : null; apagarSala(sp); } }
       else if (k === "sino") { const on = trocarSino(forumEstado.sala); toast(on ? `Avisos ligados: o sino avisa as mensagens novas da ${nomeSala(forumEstado.sala)}.` : "Avisos desta sala desligados.", 3200); desenha(); }
       else if (k === "cancresp") { resp = null; desenha(); }
       else if (k === "spo") { spoiler = !spoiler; box.querySelectorAll('[data-c="spo"]').forEach(x => x.classList.toggle("on", spoiler)); }
@@ -2463,21 +2713,33 @@ function montarForum(root) {
     if (msg) { box.querySelectorAll(".fmsg.aberta").forEach(x => x !== msg && x.classList.remove("aberta")); msg.classList.toggle("aberta"); }
   });
   // mensagens em tempo real (as 100 mais novas de cada sala, só dos últimos 7 dias)
-  for (const x of FORUM_SALAS) {
-    unsubs.push(onSnapshot(query(collection(db, "forum", x.k, "msgs"), orderBy("criadoEm", "desc"), limit(100)), (snap) => {
+  const assinar = (x) => {
+    if (subs.has(x.k)) return;
+    msgs[x.k] = msgs[x.k] || [];
+    subs.set(x.k, onSnapshot(query(colMsgs(x.k), orderBy("criadoEm", "desc"), limit(100)), (snap) => {
       const limite = Date.now() - 7 * 864e5;
       msgs[x.k] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => (m.criadoEm || 0) > limite).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
       if (!box.isConnected) return;
       if (forumEstado.sala === x.k && box.querySelector(".fmsgs")) { pintaLista(); vistoMarcar(x.k); }
       if (!forumEstado.sala || forumPC()) { const ss = box.querySelector(".fsalas"); if (ss) { const novo = document.createElement("div"); novo.innerHTML = salasHTML(); ss.replaceWith(novo.firstElementChild); const dnd = box.querySelector("#fDnd"); if (dnd) dnd.onchange = () => { setDoc(doc(db, "users", me, "config", "forum"), { dnd: dnd.checked }).catch(() => {}); forumDnd = dnd.checked; updateBell(); }; const rg = box.querySelector("#fRegras"); if (rg) rg.onclick = abrirRegras; } }
     }, () => { if (box.isConnected && forumEstado.sala === x.k) { const ms = box.querySelector(".fmsgs"); if (ms) ms.innerHTML = `<p class="fvazio">Não consegui carregar as mensagens agora.</p>`; } }));
-  }
+  };
+  todasSalas().forEach(assinar);
+  const aoMudarSalas = () => {
+    if (!box.isConnected) { ouvintesSocial.delete(aoMudarSalas); return; }
+    const ks = new Set(todasSalas().map(x => x.k));
+    for (const [k, un] of subs) if (!ks.has(k)) { un(); subs.delete(k); delete msgs[k]; }
+    todasSalas().forEach(assinar);
+    if (forumEstado.sala && !ks.has(forumEstado.sala)) { forumEstado.sala = forumPC() ? "geral" : null; membrosAberto = false; }
+    if (regrasOk) desenha();
+  };
+  ouvintesSocial.add(aoMudarSalas);
   getDoc(doc(db, "forumUsers", me)).then(d => { const t = d.exists() && (d.data() || {}).silenciadoAte; silAte = t && t.toMillis ? t.toMillis() : 0; if (silAte > Date.now() && box.isConnected) desenha(); }).catch(() => {});
   const aoMudarTela = () => { if (box.isConnected && regrasOk) desenha(); };
   const mq = matchMedia("(min-width:760px)"); mq.addEventListener("change", aoMudarTela);
   if (regrasOk) desenha();
   else { box.innerHTML = `<p class="fhint" style="padding:16px">Carregando…</p>`; regrasAceitas().then(ok => { if (!box.isConnected) return; if (ok) desenha(); else pedirRegras(box, desenha); }); }
-  return () => { unsubs.forEach(u => u()); clearInterval(esperaT); mq.removeEventListener("change", aoMudarTela); fecharFolha(); setTimeout(() => conferirSalas(true), 500); };
+  return () => { unsubs.forEach(u => u()); subs.forEach(u => u()); ouvintesSocial.delete(aoMudarSalas); clearInterval(esperaT); mq.removeEventListener("change", aoMudarTela); fecharFolha(); setTimeout(() => conferirSalas(true), 500); };
 }
 const MOTIVOS_FORUM = { ofensa: "Ofensa ou desrespeito", spoiler: "Spoiler sem aviso", improprio: "Conteúdo impróprio", spam: "Spam ou propaganda", outro: "Outro motivo" };
 function abrirDenunciaForum(m, sala) {
@@ -2662,7 +2924,8 @@ const GUIA = [
   ["Comunidade e visitas", "comunidade", "<ol><li>Em Social › <b>Comunidade</b>, veja os leitores.</li><li>Toque em alguém para visitar a estante e adicionar mangás dela à sua.</li></ol>"],
   ["Ranking", "ranking", "<ol><li>Em Social › <b>Ranking</b>: Todos os tempos, Em alta (os mais lidos em 7 dias), Este mês e Por gênero.</li><li><b>Para você</b> traz sugestões pelo que você lê.</li></ol>"],
   ["Privacidade", "privacidade", "<ol><li>O ícone de mangá no card deixa aquele mangá privado: só você vê.</li><li>Em Meu perfil, escolha estante pública ou fechada.</li></ol>"],
-  ["Fórum e regras", "forum", "<ol><li>Em Social › <b>Fórum</b>: salas Geral, Recomendações e Spoilers.</li><li>Use Spoiler para cobrir revelações. As mensagens somem em 7 dias.</li></ol>"],
+  ["Fórum e regras", "forum", "<ol><li>Em Social › <b>Fórum</b>: Sala geral, Sala de recomendações e Sala de spoilers.</li><li>Use Spoiler para cobrir revelações. As mensagens somem em 7 dias.</li><li>Dentro de cada sala, ligue os <b>Avisos</b> para o sino avisar as mensagens novas.</li></ol>"],
+  ["Amigos e salas privadas", "comunidade", "<ol><li>Adicione amigos na estante deles (<b>Adicionar amigo</b>) ou em Meu perfil › Amigos, pelo @apelido.</li><li>No Fórum, <b>Criar sala</b> monta uma sala só com amigos: até 15 pessoas, e cada um participa de até 3 salas.</li><li>Quem cria a sala é o administrador: só ele convida, renomeia e remove pessoas.</li></ol>"],
   ["Aparência", "aparencia", "<ol><li>No botão de quadradinhos ao lado dos filtros.</li><li>Escolha cards por linha, tamanho do texto, tema e a abertura do app.</li></ol>"],
   ["Lixeira", "lixeira", "<ol><li>No menu ☰ › <b>Lixeira</b>.</li><li>O que você apagou fica lá por 30 dias e pode ser restaurado.</li><li>Para apagar de vez, use a lixeirinha do mangá ou <b>Esvaziar lixeira</b>.</li></ol>"],
   ["Conta (senha, excluir)", "menu", "<ol><li>No menu ☰: <b>Trocar senha</b> e <b>Excluir minha conta</b>.</li><li>Excluir apaga a conta e todos os seus dados.</li></ol>"],
@@ -2733,7 +2996,7 @@ function vitrineHTML(p, its, visita) {
   <div class="vt" style="--vt:${cor}">
     <div class="vtban">${bn ? midiaBanner(bn, p.bannerPos) : ""}</div>
     <div class="vtin">
-      <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div></div>
+      <div class="vthead">${avatarHTML(p.foto, p.apelido, "vtav")}<div class="vtname"><b>@${esc(p.apelido || "")}</b>${p.membroDesde ? `<small>Membro desde ${mesAno(p.membroDesde)}</small>` : ""}</div>${visita ? `<span class="vtamigo" id="vtAmigo"></span>` : ""}</div>
       ${p.bio ? `<p class="vtbio">${esc(p.bio)}</p>` : ""}
       <div class="vtcnt"><span><i style="background:var(--c-lendo)"></i>${cnt.lendo} lendo</span><span><i style="background:var(--c-fila)"></i>${cnt.fila} na fila</span><span><i style="background:var(--c-pausa)"></i>${plural(cnt.pausado, "pausado", "pausados")}</span><span><i style="background:var(--c-fim)"></i>${plural(cnt.concluido, "concluído", "concluídos")}</span></div>
       ${favs.length ? `<div class="vtsec">Mangás favoritos</div><div class="vtfavs">${favs.map(it => `<button type="button" class="vtfav" data-mid="${esc(it.id)}">${capaMini(it, "vtfc")}<span>${esc(it.title)}</span></button>`).join("")}</div>` : ""}
@@ -3268,7 +3531,7 @@ function openDenuncias() {
         if (b.dataset.r === "ver") { openVisit(r.alvo, r.alvoApelido, ""); return; }
         if (b.dataset.r === "apmsg") {
           if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Apagar mesmo?"; return; }
-          await updateDoc(doc(db, "forum", r.sala, "msgs", r.msgId), { apagada: true, texto: "", gif: deleteField() });
+          await updateDoc(doc(ehPublica(r.sala) ? collection(db, "forum", r.sala, "msgs") : collection(db, "salas", r.sala, "msgs"), r.msgId), { apagada: true, texto: "", gif: deleteField() });
           await updateDoc(doc(db, "denuncias", id), { resolvido: true }).catch(() => {});
           toast("Mensagem apagada."); return;
         }

@@ -978,3 +978,64 @@ textarea.einp{resize:vertical;line-height:1.4;min-height:70px}
 .faceite h3{margin:0;font:400 24px/1.1 Bangers,Impact,sans-serif;letter-spacing:1px}
 .faceite .btn{align-self:flex-end;margin-top:4px}
 .fgifopt.conf{opacity:.45;cursor:progress}
+
+/* ---------- amigos ---------- */
+.vthead{position:relative}
+.vtamigo{margin-left:auto;align-self:center}
+.vtamigo .btn{padding:7px 14px;font-size:13px}
+.amok{display:inline-block;border:1.5px solid var(--ink);border-radius:999px;padding:6px 13px;font-weight:700;font-size:13px;background:var(--paper)}
+@media (max-width:520px){ .vthead{flex-wrap:wrap} .vtamigo{width:100%;margin-left:0;margin-top:8px} .vtamigo .btn{width:100%} }
+.amsec{border:var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
+.amh{background:var(--ink);color:var(--card);text-transform:uppercase;letter-spacing:2px;font-size:11.5px;font-weight:700;padding:9px 14px;display:flex;justify-content:space-between}
+.amin{padding:12px;display:flex;flex-direction:column;gap:10px}
+.ambusca{display:flex;flex-direction:column;gap:6px}
+.ambusca input{border:1.5px solid var(--ink);border-radius:10px;background:var(--card);color:var(--ink);padding:8px 12px;font:500 15px Inter,sans-serif;outline:none;min-height:40px}
+.ambusca input:focus{box-shadow:3px 3px 0 var(--red)}
+.amsug{border:1.5px solid var(--ink);border-radius:10px;background:var(--card);overflow:hidden}
+.amsgi{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1.5px solid var(--soft);cursor:pointer;flex-wrap:wrap}
+.amsgi:last-child{border-bottom:0}
+.amsgi.on{background:var(--paper)}
+.amsgi b{flex:1;font-size:13.5px}
+.amest{color:var(--muted);font-size:12px;font-weight:600}
+.av.amav{width:32px;height:32px;font-size:13px;flex:none}
+.amlista{display:flex;flex-direction:column;gap:8px}
+.amrow{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1.5px solid var(--ink);border-radius:10px;background:var(--paper);cursor:pointer;flex-wrap:wrap}
+.amrow .tx{flex:1;display:flex;flex-direction:column}
+.amrow .tx b{font-size:13.5px}.amrow .tx small{font-size:12px;color:var(--muted)}
+.ammais{width:34px;padding:4px 0!important;text-align:center}
+.btn.amdel{background:var(--red);color:#fff;border-color:var(--red)}
+.amenv{margin:0}
+.btn.sm{padding:5px 12px;font-size:12px;min-height:30px}
+
+/* ---------- salas privadas ---------- */
+.fminhas{display:flex;justify-content:space-between;align-items:center}
+.fminhas small{font-size:11px;letter-spacing:.5px;text-transform:none;opacity:.8}
+.fpriv{font-size:10px;font-weight:700;border:1.5px solid var(--muted);color:var(--muted);border-radius:999px;padding:0 7px;letter-spacing:0}
+.fcriar{margin:10px 14px 12px;align-self:flex-start}
+.fconvh3{height:auto!important;flex-direction:column;align-items:stretch!important;gap:2px!important;padding:10px 14px!important}
+.fconvh3 .l1{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.fconvh3 .fsino{margin-left:0}
+.fconvh3 b{font-size:16px}
+.fmembn{align-self:flex-start;border:0;background:none;padding:2px 0;font:700 12.5px Inter,sans-serif;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.fmembros{border-bottom:var(--line);background:var(--card);max-height:46vh;overflow:auto}
+.fmemb{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1.5px solid var(--soft)}
+.fmemb b{flex:1;font-size:13.5px}
+.fmemb.adm b{color:var(--an-anu)}
+.fmemb small{font-size:11px;font-weight:700;color:var(--an-anu);border:1.5px solid currentColor;border-radius:999px;padding:0 8px}
+.fmb{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);color:var(--ink);padding:3px 10px;font:700 12px Inter,sans-serif;cursor:pointer}
+.fmb.amdel{background:var(--red);color:#fff;border-color:var(--red)}
+.fmacoes{display:flex;flex-direction:column}
+.fmacoes button{border:0;border-bottom:1.5px solid var(--soft);background:none;text-align:left;padding:11px 14px;font:600 13.5px Inter,sans-serif;color:var(--ink);cursor:pointer}
+.fmacoes button:last-child{border-bottom:0}
+.fmacoes .red{color:var(--red)}
+.eslista{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto}
+.eschk{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1.5px solid var(--ink);border-radius:10px;background:var(--paper);cursor:pointer;color:var(--ink);text-align:left}
+.eschk b{flex:1;font-size:13.5px}
+.eschk .bx{width:22px;height:22px;border:1.5px solid var(--ink);border-radius:6px;background:var(--card);display:grid;place-items:center;font-weight:800;font-size:13px;flex:none}
+.eschk.on .bx{background:var(--ink);color:var(--card)}
+/* sino: pedidos e convites */
+#nPend{margin-bottom:4px}
+.npend{flex-wrap:wrap}
+.npend .nt{min-width:150px}
+.nacts{display:flex;gap:6px;margin-left:auto}
+@media (max-width:520px){ .nacts{width:100%;justify-content:flex-end} }
