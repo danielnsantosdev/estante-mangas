@@ -1,0 +1,44 @@
+# Sinopses do catálogo: exporta para revisão (sinopses/atual.json) e grava as revisadas.
+#  - muda sinopses/pedido.json   → exporta as obras pedidas
+#  - muda sinopses/revisadas.json → grava no catálogo as sinopses revisadas
+name: Sinopses
+
+on:
+  push:
+    branches: [main]
+    paths: ["sinopses/pedido.json", "sinopses/revisadas.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sinopses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Instalar o acesso ao Firebase
+        working-directory: scripts
+        run: npm init -y >/dev/null && npm install --no-audit --no-fund firebase-admin@12
+      - name: Gravar as sinopses revisadas
+        if: contains(join(github.event.commits.*.modified, ','), 'sinopses/revisadas.json') || contains(join(github.event.commits.*.added, ','), 'sinopses/revisadas.json')
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          MODO: gravar
+        run: node sinopses.js
+      - name: Exportar as sinopses pedidas
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          MODO: exportar
+        run: node sinopses.js
+      - name: Salvar o resultado no repositório
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898699+github-actions[bot]@users.noreply.github.com"
+          git add sinopses/atual.json
+          git diff --cached --quiet || (git commit -m "Sinopses exportadas para revisão [skip ci]" && git push)
