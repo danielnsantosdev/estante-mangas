@@ -77,12 +77,17 @@ const nomesPagina = (h) => {
 };
 async function acharMalId(c) {
   const nomes = nomesDe(c); if (!nomes.length) return 0;
-  const q = c.nomeEN || c.titulo || nomes[0];
-  const h = await pagina("/manga.php?cat=manga&q=" + encodeURIComponent(String(q).slice(0, 80)));
-  const cand = [];
-  for (const m of (h || "").matchAll(/href="https:\/\/myanimelist\.net\/manga\/(\d+)\/[^"]*"[^>]*>\s*<strong>([^<]+)<\/strong>/g)) if (!cand.some(x => x.id === +m[1])) cand.push({ id: +m[1], nome: normNome(m[2]) });
-  const direto = cand.find(x => nomes.includes(x.nome)); if (direto) return direto.id;
-  for (const x of cand.slice(0, 3)) { const hp = await pagina(`/manga/${x.id}`); if (nomesPagina(hp).some(n => nomes.includes(n))) return x.id; }
+  const consultas = [...new Set([c.nomeEN, c.titulo, c.titulo2].filter(Boolean).map(x => String(x).slice(0, 60)))].slice(0, 2);
+  const vistos = new Set();
+  for (const q of consultas) {
+    let itens = [];
+    try { itens = (JSON.parse(await pagina("/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent(q))).categories || []).flatMap(k => k.items || []); } catch (e) { logDiag.push("busca " + q + ": " + e.message); }
+    const direto = itens.find(x => nomes.includes(normNome(x.name))); if (direto) return +direto.id;
+    for (const x of itens.slice(0, 5)) {
+      if (vistos.has(x.id)) continue; vistos.add(x.id);
+      if (nomesPagina(await pagina(`/manga/${x.id}`)).some(n => nomes.includes(n))) return +x.id;
+    }
+  }
   return 0;
 }
 const VALE = { anu: 20 * 3600e3, nada: 3 * 864e5, sit: 7 * 864e5 };
@@ -97,11 +102,6 @@ const precisa = (c) => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
     out.busca = {};
-    out.pagina = {};
-    for (const k of ["beginning after", "The Beginning After", "one punch"]) {
-      try { out.pagina["prefix " + k] = (await pagina("/search/prefix.json?type=manga&v=1&keyword=" + encodeURIComponent(k))).slice(0, 600); } catch (e) { out.pagina[k] = "falhou: " + e.message; }
-    }
-    try { const h = await pagina("/search/all?cat=manga&q=" + encodeURIComponent("The Beginning After the End")); const i = h.indexOf("/manga/"); out.pagina.all = [...h.matchAll(/\/manga\/[^"]{0,80}/g)].slice(0, 6).map(m => m[0]); out.pagina.trecho = h.slice(h.indexOf("<body"), h.indexOf("<body") + 100) + " … " + (i >= 0 ? h.slice(i - 200, i + 200) : "sem /manga/"); } catch (e) { out.pagina.all = "falhou: " + e.message; }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
     console.log(JSON.stringify(out));
