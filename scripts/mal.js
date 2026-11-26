@@ -1,8 +1,8 @@
-// MyAnimeList (via Jikan): anime e situação de cada obra do catálogo, conferidos aqui no GitHub
+// MyAnimeList (lendo as páginas do próprio site): anime e situação de cada obra do catálogo, conferidos aqui no GitHub
 // uma vez para todo mundo. O app só lê o resultado na ficha da obra (campos anime e situacao).
 //  - anime.st: "anu" (anunciado, ainda não estreou) | "dis" (já saiu episódio) | null (sem anime)
 //  - "dis" e situação "Finished"/"Discontinued" não voltam atrás: não são conferidos de novo
-// MODO=diag: confere só o One Piece e falha se não vier "anime disponível" (teste da rotina)
+// MODO=diag: confere One Piece e Omniscient Reader e grava o resultado em sinopses/diag-mal.json
 const admin = require("firebase-admin");
 function lerChave(txt) {
   txt = String(txt || "").replace(/^\uFEFF/, "").trim();
@@ -32,30 +32,38 @@ const db = admin.firestore();
 
 const espera = (ms) => new Promise(r => setTimeout(r, ms));
 let ultima = 0; const logDiag = [];
-async function jikan(path) {
-  for (let t = 0; t < 4; t++) {
-    const falta = 1200 - (Date.now() - ultima); if (falta > 0) await espera(falta);
+// lê a página do próprio MyAnimeList, com calma (uma página a cada 2,5 s)
+async function pagina(path) {
+  for (let t = 0; t < 3; t++) {
+    const falta = 2500 - (Date.now() - ultima); if (falta > 0) await espera(falta);
     ultima = Date.now();
-    let r;
-    try { r = await fetch("https://api.jikan.moe/v4" + path, { headers: { Accept: "application/json", "User-Agent": "EstanteDeMangas/1.0 (github.com/danielnsantosdev/estante-mangas)" } }); }
-    catch (e) { const msg = `Jikan ${path}: ${e.message} ${(e.cause && (e.cause.code || e.cause.message)) || ""}`; logDiag.push(msg); console.log(msg); await espera(4000 * (t + 1)); continue; }
-    if (r.ok) return r.json();
-    if (r.status === 404) return null;
-    const msg = `Jikan ${path}: ${r.status} ${(await r.text()).slice(0, 160)}`; logDiag.push(msg); console.log(msg + " — tentando de novo…"); await espera(3000 * (t + 1));
+    try {
+      const r = await fetch("https://myanimelist.net" + path, { headers: { "User-Agent": "Mozilla/5.0 (compatible; EstanteDeMangas/1.0; +https://github.com/danielnsantosdev/estante-mangas)", "Accept-Language": "en" }, signal: AbortSignal.timeout(25000) });
+      if (r.ok) return r.text();
+      if (r.status === 404) return "";
+      logDiag.push(`${path}: ${r.status}`);
+    } catch (e) { logDiag.push(`${path}: ${e.message}`); }
+    await espera(5000 * (t + 1));
   }
-  throw new Error("Jikan não respondeu: " + path);
+  throw new Error("MyAnimeList não respondeu: " + path);
+}
+const statusDe = (h) => { const m = /Status:<\/span>\s*([^<]+)</.exec(h || ""); return m ? m[1].replace(/\s+/g, " ").trim() : ""; };
+function adaptacoes(h) {   // animes que adaptam o mangá ("Adaptation"), nos cartões e na tabela de relacionados
+  const ids = [];
+  for (const m of (h || "").matchAll(/<div class="relation">\s*Adaptation[\s\S]{0,200}?<div class="title">\s*<a href="https:\/\/myanimelist\.net\/anime\/(\d+)/g)) ids.push(+m[1]);
+  for (const m of (h || "").matchAll(/>\s*Adaptation:\s*<\/td>([\s\S]*?)<\/ul>/g)) for (const a of m[1].matchAll(/myanimelist\.net\/anime\/(\d+)/g)) ids.push(+a[1]);
+  return [...new Set(ids)];
 }
 async function conferir(mid) {
-  const m = await jikan(`/manga/${mid}/full`);
-  const d = (m && m.data) || {};
-  const ids = (d.relations || []).filter(x => x.relation === "Adaptation").flatMap(x => x.entry || []).filter(e => e.type === "anime").map(e => e.mal_id);
+  const h = await pagina(`/manga/${mid}`);
+  const ids = adaptacoes(h);
   let st = null, aid = 0;
   for (const id of ids.slice(0, 8)) {
-    const a = await jikan(`/anime/${id}`); const sa = a && a.data && a.data.status;
+    const sa = statusDe(await pagina(`/anime/${id}`));
     if (sa === "Currently Airing" || sa === "Finished Airing") { st = "dis"; aid = id; break; }
     if (sa === "Not yet aired" && !st) { st = "anu"; aid = id; }
   }
-  return { anime: { st, aid }, situacao: d.status || "" };
+  return { anime: { st, aid }, situacao: statusDe(h) };
 }
 const VALE = { anu: 20 * 3600e3, nada: 3 * 864e5, sit: 7 * 864e5 };
 const precisa = (c) => {
@@ -68,24 +76,10 @@ const precisa = (c) => {
 (async () => {
   if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
     const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
-    try {
-      const m = await jikan("/manga/13/full"); const d = (m && m.data) || {};
-      out.manga = { status: d.status, relacoes: (d.relations || []).map(x => ({ relation: x.relation, entry: (x.entry || []).slice(0, 4) })) };
-      out.resultado = await conferir(13);
-    } catch (e) { out.erro = String(e && e.message || e); }
-    for (const u of ["https://api.jikan.moe/v4", "https://myanimelist.net/manga/13", "https://api.myanimelist.net/v2/manga/13"]) {
-      try { const r = await fetch(u); out[u] = r.status; } catch (e) { out[u] = "falhou: " + ((e.cause && (e.cause.code || e.cause.message)) || e.message); }
-    }
-    try {
-      const h = await (await fetch("https://myanimelist.net/manga/13", { headers: { "User-Agent": "Mozilla/5.0 EstanteDeMangas" } })).text();
-      const i = h.indexOf("Related Entries"); out.relacionadas = i >= 0 ? h.slice(i, i + 6000) : "(sem Related Entries)";
-      const j = h.search(/Status:<\/span>/); out.statusTrecho = j >= 0 ? h.slice(j, j + 120) : "(sem Status)";
-      const h2 = await (await fetch("https://myanimelist.net/anime/21", { headers: { "User-Agent": "Mozilla/5.0 EstanteDeMangas" } })).text();
-      const k = h2.search(/Status:<\/span>/); out.animeStatusTrecho = k >= 0 ? h2.slice(k, k + 120) : "(sem Status)";
-    } catch (e) { out.paginaErro = e.message; }
+    try { out.onePiece = await conferir(13); out.orv = await conferir(132214); } catch (e) { out.erro = String(e && e.message || e); }
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
-    console.log(JSON.stringify(out.resultado || out.erro));
+    console.log(JSON.stringify(out));
     process.exit(0);
   }
   const snap = await db.collection("catalogo").get();
