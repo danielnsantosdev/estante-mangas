@@ -1,5 +1,13 @@
 {
-  "quando": "2026-11-26T04:22:32.956Z",
-  "erro": "fetch failed",
-  "log": []
+  "quando": "2026-11-26T04:24:39.221Z",
+  "erro": "Jikan não respondeu: /manga/13/full",
+  "https://api.jikan.moe/v4": "falhou: ETIMEDOUT",
+  "https://myanimelist.net/manga/13": 200,
+  "https://api.myanimelist.net/v2/manga/13": 403,
+  "log": [
+    "Jikan /manga/13/full: fetch failed ETIMEDOUT",
+    "Jikan /manga/13/full: fetch failed ETIMEDOUT",
+    "Jikan /manga/13/full: fetch failed ETIMEDOUT",
+    "Jikan /manga/13/full: fetch failed ETIMEDOUT"
+  ]
 }
