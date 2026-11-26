@@ -1056,3 +1056,8 @@ textarea.einp{resize:vertical;line-height:1.4;min-height:70px}
 .esaiu{font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
 .esaiu b{color:var(--ink)}
 @media (max-width:370px){ .estep input{width:58px} .estep button{width:36px} .egrid3{gap:10px} }
+
+/* status do editar numa linha só (desce para a linha de baixo só em celular estreito) */
+.edst{gap:5px}
+.edst button{padding:6px 10px;gap:5px}
+@media (min-width:400px){ .edst{flex-wrap:nowrap} }

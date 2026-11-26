@@ -176,7 +176,7 @@ service cloud.firestore {
     match /catalogo/{id} {
       allow read: if acesso();
       allow create: if acesso()
-        && id.matches('^(al|mal)[0-9]{1,10}$')
+        && id.matches('^((al|mal)[0-9]{1,10}|md[0-9a-f]{32})$')   // md…: obra que só existe no MangaDex
         && request.resource.data.keys().hasOnly(['titulo', 'titulo2', 'generos', 'sinopse', 'sinopseOrig', 'capa', 'tipo', 'alId', 'malId', 'atualizadoEm', 'nomeEN', 'nomePT', 'nomes', 'idade'])
         && nomesOk(request.resource.data)
         && request.resource.data.titulo is string && request.resource.data.titulo.size() > 0 && request.resource.data.titulo.size() <= 200

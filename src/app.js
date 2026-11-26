@@ -305,7 +305,7 @@ function clean(it) {
     title: String(it.title || "").trim().slice(0, 120) || "Sem nome",
     titulo2: String(it.titulo2 || "").trim().slice(0, 200),
     alias: String(it.alias || "").trim().slice(0, 1000),
-    catId: /^(al|mal)[0-9]{1,10}$/.test(String(it.catId || "")) ? String(it.catId) : "",
+    catId: /^((al|mal)[0-9]{1,10}|md[0-9a-f]{32})$/.test(String(it.catId || "")) ? String(it.catId) : "",
     chapter: Math.min(99999, parseCap(it.chapter)),
     status: stOf(it),
     link: fixLink(it.link).slice(0, 2000),
@@ -482,6 +482,10 @@ function limpaSinopse(s) {
 }
 // ---------- anime: o AniList liga cada mangá às adaptações em anime ----------
 async function buscaAniList(q) {
+  try { return await buscaAniList1(q); }
+  catch (e) { await new Promise(r => setTimeout(r, 2500)); return buscaAniList1(q); }
+}
+async function buscaAniList1(q) {
   const query = `query($q:String){Page(perPage:10){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year}}}}`;
   const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query, variables: { q } }) });
   return ((j.data && j.data.Page && j.data.Page.media) || []).filter(m => m.format !== "NOVEL").map(m => ({
@@ -491,6 +495,24 @@ async function buscaAniList(q) {
     tipo: TIPO[m.countryOfOrigin] || "Mangá", sinonimos: (m.synonyms || []).filter(x => typeof x === "string"),
     nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null,
   }));
+}
+// MangaDex: obras que o AniList não tem (ex.: The Beginning After the End) entram por aqui
+async function buscaMangaDex(q) {
+  const j = await httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(q)}&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&order[relevance]=desc`);
+  return ((j && j.data) || []).map(m => {
+    const a = m.attributes || {}, l = a.links || {}, alts = a.altTitles || [];
+    const en = ((a.title || {}).en || (alts.find(t => t.en) || {}).en || Object.values(a.title || {})[0] || "").trim();
+    const cov = (m.relationships || []).find(x => x.type === "cover_art"), arq = cov && cov.attributes && cov.attributes.fileName;
+    const mal = /^\d+$/.test(String(l.mal || "")) ? +l.mal : null, al = /^\d+$/.test(String(l.al || "")) ? +l.al : null;
+    return {
+      key: mal ? "mal" + mal : "md" + String(m.id || "").replace(/-/g, "").toLowerCase(), alId: al, malId: mal,
+      original: en, ingles: en, capa: arq ? `https://uploads.mangadex.org/covers/${m.id}/${arq}.512.jpg` : "",
+      generos: generosPT((a.tags || []).filter(t => t.attributes && ["genre", "theme"].includes(t.attributes.group)).map(t => (t.attributes.name || {}).en)),
+      desc: (a.description || {}).en || "", tipo: { ko: "Manhwa", zh: "Manhua", "zh-hk": "Manhua" }[a.originalLanguage] || "Mangá",
+      sinonimos: alts.flatMap(t => Object.values(t)).filter(x => typeof x === "string"), ano: a.year || null,
+      nomePT: (alts.find(t => t["pt-br"]) || {})["pt-br"] || "", outros: alts.flatMap(t => Object.values(t)), md: true,
+    };
+  }).filter(r => r.original && /^((al|mal)\d+|md[0-9a-f]{32})$/.test(r.key));
 }
 async function buscaMAL(q) {
   const j = await httpJSON(`https://api.jikan.moe/v4/manga?q=${encodeURIComponent(q)}&limit=10&sfw=true`);
@@ -503,12 +525,7 @@ async function buscaMAL(q) {
     sinonimos: [...(m.title_synonyms || []), ...((m.titles || []).map(t => t.title))].filter(x => typeof x === "string"),
   }));
 }
-async function buscaCatalogo(q) {
-  let r = [];
-  try { r = await buscaAniList(q); } catch (e) {}
-  if (!r.length) { try { r = await buscaMAL(q); } catch (e) {} }
-  return r;
-}
+async function buscaCatalogo(q) { return buscaGeral(q); }   // a mesma busca completa da lupa
 // Tradução automática (inglês → português), em pedaços de até ~450 caracteres
 async function traduzPT(texto) {
   texto = String(texto || "").trim(); if (!texto) return "";
@@ -577,7 +594,7 @@ const aliasDe = (c) => (c.nomes || []).join(" | ").slice(0, 1000);
 async function prepararCatalogo(r) {
   const salvo = await lerCatalogo(r.key);
   if (salvo && salvo.nomes) return salvo;
-  const pt = await mangaDexPT(r);
+  const pt = r.md && !r.malId && !r.alId ? { titulo: r.nomePT || "", sinopse: "", nomes: r.outros || [] } : await mangaDexPT(r);
   const nomes = listaNomes([r.original, r.ingles, pt.titulo, ...(pt.nomes || []), ...(r.sinonimos || [])]);
   if (salvo) {   // catálogo antigo, sem os nomes: completa
     const extra = { nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, idade: idadeDe({ generos: salvo.generos, rating: pt.rating }), atualizadoEm: Date.now() };
@@ -2017,25 +2034,16 @@ async function adicionarObra(x, btn) {
 
 // ---------- Lupa: busca geral no catálogo (nomes em inglês, japonês, português, coreano e chinês) ----------
 async function buscaGeral(q) {
-  const [al, md] = await Promise.all([buscaAniList(q).catch(() => []),
-    httpJSON(`https://api.mangadex.org/manga?limit=10&title=${encodeURIComponent(q)}&contentRating[]=safe&contentRating[]=suggestive`).catch(() => null)]);
-  let r = al.slice();
-  // o MangaDex conhece nomes em português e variações que o AniList não tem: traz essas obras pelo id do AniList
-  const extra = (((md && md.data) || []).map(m => { const l = (m.attributes && m.attributes.links) || {}; const alts = (m.attributes && m.attributes.altTitles) || [];
-    const pt = alts.find(t => t["pt-br"]); return { al: +l.al || 0, pt: pt ? pt["pt-br"] : "", nomes: [...Object.values(m.attributes.title || {}), ...alts.flatMap(t => Object.values(t))] }; }))
-    .filter(x => x.al);
-  const faltam = extra.filter(x => !r.some(y => y.alId === x.al)).map(x => x.al).slice(0, 10);
-  if (faltam.length) {
-    try {
-      const j = await httpJSON("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ query: `query($a:[Int]){Page(perPage:10){media(id_in:$a,type:MANGA,isAdult:false){id idMal title{romaji english native} synonyms coverImage{large} genres description(asHtml:false) countryOfOrigin format startDate{year}}}}`, variables: { a: faltam } }) });
-      const ms = ((j && j.data && j.data.Page && j.data.Page.media) || []);
-      for (const m of ms) r.push({ ...rDeAniList(m), nativo: (m.title.native || "").trim(), ano: (m.startDate && m.startDate.year) || null });
-    } catch (e) {}
+  const [al, md] = await Promise.all([buscaAniList(q).catch(() => []), buscaMangaDex(q).catch(() => [])]);
+  const r = al.slice();
+  for (const x of md) {
+    const igual = r.find(y => (x.alId && y.alId === x.alId) || (x.malId && y.malId === x.malId) || y.key === x.key);
+    if (igual) { if (!igual.nomePT) igual.nomePT = x.nomePT; igual.outros = x.outros; continue; }
+    r.push(x);   // só o MangaDex tem essa obra
   }
-  r.forEach(x => { const e = extra.find(y => y.al === x.alId); if (e) { x.nomePT = e.pt; x.outros = e.nomes; } });
-  if (!r.length) { try { r = await buscaMAL(q); } catch (e) {} }
-  return r.filter(x => !nomeSuspeito(x.original) && !nomeSuspeito(x.ingles || ""));
+  let fim = r;
+  if (!fim.length) { try { fim = await buscaMAL(q); } catch (e) {} }
+  return fim.filter(x => !nomeSuspeito(x.original) && !nomeSuspeito(x.ingles || ""));
 }
 function nomeQueBateu(r, q) {   // quando a busca achou por outro nome (ex.: o nome em português), mostra qual
   const nq = norm(q), vistos = [r.ingles, r.original].map(norm);
@@ -2073,7 +2081,7 @@ function openLupa() {
       if (meu !== seq || !box.isConnected) return;
       lista = r; draw(q);
     };
-    inp.addEventListener("input", () => { clearTimeout(t); t = setTimeout(buscar, 450); });
+    inp.addEventListener("input", () => { clearTimeout(t); t = setTimeout(buscar, 750); });   // espera parar de digitar: menos consultas
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
     box.addEventListener("click", async (e) => {
       const add = e.target.closest("[data-lpadd]");

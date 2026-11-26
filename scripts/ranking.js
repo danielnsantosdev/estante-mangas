@@ -125,7 +125,7 @@ async function buscaAniList(titulo) {
 const DIA = 86400e3;
 const agoraBR = () => new Date(Date.now() - 3 * 3600e3);   // horário de Brasília (como UTC)
 const idHist = (uid, chave) => `${uid}__${chave}`.replace(/\//g, "_").slice(0, 300);
-const ehCat = (k) => /^(al|mal)\d+$/.test(k || "");
+const ehCat = (k) => /^((al|mal)\d+|md[0-9a-f]{32})$/.test(k || "");
 
 (async () => {
   try { await require("./limpeza.js")(db); } catch (e) { console.log("Limpeza do fórum falhou: " + e.message); }
