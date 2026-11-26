@@ -20,6 +20,9 @@ jobs:
         with: { node-version: 20 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      # guarda no GitHub as peças do Android já baixadas (Gradle, Kotlin etc.): as próximas compilações reaproveitam
+      # em vez de baixar tudo de novo do servidor de peças (que às vezes recusa por excesso de pedidos)
+      - uses: gradle/actions/setup-gradle@v4
       - run: npm install --no-audit --no-fund
       - run: npm run build:web
       - name: Número da versão e chaves da busca de GIF
@@ -42,7 +45,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          for i in 1 2 3; do ./gradlew assembleRelease --no-daemon && break; echo "Tentativa $i falhou, esperando 60s..."; sleep 60; [ $i = 3 ] && exit 1; done
+          for i in 1 2 3; do ./gradlew assembleRelease --no-daemon && break; echo "Tentativa $i falhou, esperando 120s..."; sleep 120; [ $i = 3 ] && exit 1; done
       - name: Assinar APK
         env:
           KS_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
