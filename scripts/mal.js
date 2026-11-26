@@ -31,7 +31,7 @@ admin.initializeApp({ credential: admin.credential.cert(sa) });
 const db = admin.firestore();
 
 const espera = (ms) => new Promise(r => setTimeout(r, ms));
-let ultima = 0;
+let ultima = 0; const logDiag = [];
 async function jikan(path) {
   for (let t = 0; t < 4; t++) {
     const falta = 1200 - (Date.now() - ultima); if (falta > 0) await espera(falta);
@@ -39,7 +39,7 @@ async function jikan(path) {
     const r = await fetch("https://api.jikan.moe/v4" + path, { headers: { Accept: "application/json" } });
     if (r.ok) return r.json();
     if (r.status === 404) return null;
-    console.log(`Jikan ${path}: ${r.status}, tentando de novo…`); await espera(3000 * (t + 1));
+    const msg = `Jikan ${path}: ${r.status} ${(await r.text()).slice(0, 160)}`; logDiag.push(msg); console.log(msg + " — tentando de novo…"); await espera(3000 * (t + 1));
   }
   throw new Error("Jikan não respondeu: " + path);
 }
@@ -64,10 +64,17 @@ const precisa = (c) => {
 };
 
 (async () => {
-  if (process.env.MODO === "diag") {
-    const r = await conferir(13);
-    console.log("One Piece no MyAnimeList:", JSON.stringify(r));
-    process.exit(r.anime.st === "dis" ? 0 : 1);
+  if (process.env.MODO === "diag") {   // grava o resultado do teste em sinopses/diag-mal.json
+    const fs = require("fs"), path = require("path"), out = { quando: new Date().toISOString() };
+    try {
+      const m = await jikan("/manga/13/full"); const d = (m && m.data) || {};
+      out.manga = { status: d.status, relacoes: (d.relations || []).map(x => ({ relation: x.relation, entry: (x.entry || []).slice(0, 4) })) };
+      out.resultado = await conferir(13);
+    } catch (e) { out.erro = String(e && e.message || e); }
+    out.log = logDiag;
+    fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
+    console.log(JSON.stringify(out.resultado || out.erro));
+    process.exit(0);
   }
   const snap = await db.collection("catalogo").get();
   const fila = snap.docs.filter(d => { const c = d.data() || {}; const mid = c.malId || (/^mal(\d+)$/.exec(d.id) || [])[1]; return mid && precisa(c); }).slice(0, 25);
