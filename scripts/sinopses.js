@@ -43,7 +43,7 @@ async function exportar() {
     const c = d.data() || {};
     const nomes = norm([c.titulo, c.titulo2, ...(c.nomes || [])].join(" | "));
     if (!pedido.todas && !termos.some(t => nomes.includes(t))) return;
-    saida[d.id] = { titulo: c.titulo || "", titulo2: c.titulo2 || "", tipo: c.tipo || "", sinopse: c.sinopse || "", sinopseOrig: c.sinopseOrig || "", revisada: !!c.sinopseRevisada };
+    saida[d.id] = { titulo: c.titulo || "", titulo2: c.titulo2 || "", tipo: c.tipo || "", sinopse: c.sinopse || "", sinopseOrig: c.sinopseOrig || "", revisada: !!c.sinopseRevisada, anime: c.anime || null, situacao: c.situacao || "" };
   });
   fs.writeFileSync(path.join(PASTA, "atual.json"), JSON.stringify(saida, null, 2) + "\n");
   console.log(`Catálogo: ${snap.size} obras; ${Object.keys(saida).length} exportadas.`);
