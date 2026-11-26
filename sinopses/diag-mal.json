@@ -1,5 +1,5 @@
 {
-  "quando": "2026-11-26T11:56:19.263Z",
+  "quando": "2026-11-26T11:59:33.462Z",
   "busca": {
     "The Beginning After the End": "não encontrado",
     "One Punch-Man": {
@@ -10,6 +10,12 @@
       },
       "situacao": "Publishing"
     }
+  },
+  "nomes": {
+    "The Beginning After the End": [],
+    "Beginning After the End": [],
+    "Kkeut-i Anin Sijak": [],
+    "Kkeuti Aninsijak": []
   },
   "log": []
 }
