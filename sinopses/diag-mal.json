@@ -1,5 +1,5 @@
 {
-  "quando": "2026-11-26T12:04:02.051Z",
+  "quando": "2026-11-26T12:07:41.937Z",
   "busca": {
     "The Beginning After the End": {
       "malId": 0,
@@ -18,7 +18,19 @@
       "situacao": "Publishing"
     }
   },
-  "situacaoMangaDex": "Finished",
+  "catalogoSemMal": [
+    {
+      "id": "md4ada20eb085a491a8c49477ab42014d7",
+      "titulo": "The Beginning After the End",
+      "anime": {
+        "st": "dis",
+        "porNome": true,
+        "aid": 60146
+      },
+      "situacao": "Publishing",
+      "buscado": true
+    }
+  ],
   "prefixoAnime": [
     "60146 Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru?",
     "61831 Saikyou no Ousama, Nidome no Jinsei wa Nani wo Suru? Season 2"
