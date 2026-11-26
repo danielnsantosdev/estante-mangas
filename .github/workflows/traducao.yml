@@ -1,0 +1,36 @@
+# Tradução das sinopses novas com o DeepL, de hora em hora.
+# As obras novas aparecem primeiro com a tradução rápida do app e, em até 1 hora, ganham a versão do DeepL.
+name: Tradução
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  push:
+    branches: [main]
+    paths: ["scripts/deepl.js", ".github/workflows/traducao.yml"]
+  workflow_dispatch:
+
+jobs:
+  traducao:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Instalar o acesso ao Firebase
+        working-directory: scripts
+        run: npm init -y >/dev/null && npm install --no-audit --no-fund firebase-admin@12
+      - name: Testar a chave do DeepL (só quando a rotina muda)
+        if: github.event_name == 'push'
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          DEEPL_KEY: ${{ secrets.DEEPL_KEY }}
+          MODO: teste
+        run: node deepl.js
+      - name: Traduzir as sinopses novas
+        working-directory: scripts
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          DEEPL_KEY: ${{ secrets.DEEPL_KEY }}
+        run: node deepl.js

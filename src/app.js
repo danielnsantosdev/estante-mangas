@@ -585,7 +585,8 @@ async function prepararCatalogo(r) {
   let sinopse = limpaSinopse(pt.sinopse || "");
   if (!sinopse && orig) { try { sinopse = await traduzPT(orig); } catch (e) { sinopse = ""; } }
   const titulo2 = (pt.titulo && norm(pt.titulo) !== norm(r.original) ? pt.titulo : (r.ingles && norm(r.ingles) !== norm(r.original) ? r.ingles : "")).slice(0, 200);
-  const c = { titulo: r.original.slice(0, 200), titulo2, generos: r.generos, sinopse: sinopse.slice(0, 4000), sinopseOrig: sinopse ? "" : orig.slice(0, 4000),
+  const c = { titulo: r.original.slice(0, 200), titulo2, generos: r.generos, sinopse: sinopse.slice(0, 4000), sinopseOrig: pt.sinopse ? "" : orig.slice(0, 4000),   // original guardado: a rotina do GitHub retraduz com o DeepL
+   
     capa: String(r.capa || "").slice(0, 500), tipo: r.tipo, alId: r.alId || null, malId: r.malId || null, atualizadoEm: Date.now(),
     nomeEN: (r.ingles || "").slice(0, 200), nomePT: (pt.titulo || "").slice(0, 200), nomes, idade: idadeDe({ generos: r.generos, rating: pt.rating }) };
   try { await setDoc(doc(db, "catalogo", r.key), c); } catch (e) {}
