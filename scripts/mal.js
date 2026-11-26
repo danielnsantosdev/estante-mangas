@@ -141,7 +141,8 @@ const precisa = (c) => {
     for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
       try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : { malId: 0, anime: await animePorNome(c) }; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
     }
-    out.situacaoMangaDex = await situacaoMangaDex("md6e3553b9ddb54d37b7a399998044774e");
+    out.catalogoSemMal = (await db.collection("catalogo").get()).docs.filter(d => !(d.data() || {}).malId && !/^mal\d+$/.test(d.id))
+      .map(d => { const c = d.data() || {}; return { id: d.id, titulo: c.titulo, anime: c.anime || null, situacao: c.situacao || "", buscado: !!c.malBuscaEm }; });
     out.prefixoAnime = (await prefixo("anime", "The Beginning After the End")).slice(0, 6).map(x => x.id + " " + x.name);
     out.log = logDiag;
     fs.writeFileSync(path.join(__dirname, "..", "sinopses", "diag-mal.json"), JSON.stringify(out, null, 2));
