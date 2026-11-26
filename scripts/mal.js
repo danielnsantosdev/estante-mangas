@@ -141,6 +141,23 @@ const precisa = (c) => {
     for (const c of [{ titulo: "The Beginning After the End", nomes: ["O Começo Depois do Fim"] }, { titulo: "One Punch-Man", nomeEN: "One-Punch Man" }]) {
       try { const id = await acharMalId(c); out.busca[c.titulo] = id ? { malId: id, ...(await conferir(id)) } : { malId: 0, anime: await animePorNome(c) }; } catch (e) { out.busca[c.titulo] = "falhou: " + e.message; }
     }
+    out.capas = {};
+    try {
+      const j = await (await fetch("https://api.mangadex.org/manga?limit=3&title=" + encodeURIComponent("Trash of the Count's Family") + "&includes[]=cover_art")).json();
+      const m = (j.data || [])[0], cov = m && (m.relationships || []).find(x => x.type === "cover_art"), arq = cov && cov.attributes && cov.attributes.fileName;
+      out.capas.obra = m && ((m.attributes.title || {}).en);
+      for (const suf of [".512.jpg", ".256.jpg", ""]) {
+        const u = `https://uploads.mangadex.org/covers/${m.id}/${arq}${suf}`;
+        for (const [nome, hd] of [["sem referer", {}], ["referer localhost", { Referer: "https://localhost/" }], ["referer site", { Referer: "https://danielnsantosdev.github.io/" }]]) {
+          try { const r = await fetch(u, { headers: hd, redirect: "manual" }); const b = Buffer.from(await r.arrayBuffer()); out.capas[suf + " " + nome] = `${r.status} ${r.headers.get("content-type")} ${b.length}B ${r.headers.get("location") || ""}`; } catch (e) { out.capas[suf + " " + nome] = "falhou " + e.message; }
+        }
+      }
+      const w = await fetch("https://wsrv.nl/?url=" + encodeURIComponent(`uploads.mangadex.org/covers/${m.id}/${arq}.256.jpg`)); out.capas.wsrv = `${w.status} ${w.headers.get("content-type")} ${(await w.arrayBuffer()).byteLength}B`;
+    } catch (e) { out.capas.erro = e.message; }
+    try {
+      const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ query: "query($q:String){Page(perPage:3){media(search:$q,type:MANGA,isAdult:false,sort:SEARCH_MATCH){id title{romaji english} coverImage{large}}}}", variables: { q: "Trash of the Count's Family" } }) });
+      out.anilist = `${r.status} ${(await r.text()).slice(0, 500)}`;
+    } catch (e) { out.anilist = "falhou " + e.message; }
     out.catalogoSemMal = (await db.collection("catalogo").get()).docs.filter(d => !(d.data() || {}).malId && !/^mal\d+$/.test(d.id))
       .map(d => { const c = d.data() || {}; return { id: d.id, titulo: c.titulo, anime: c.anime || null, situacao: c.situacao || "", buscado: !!c.malBuscaEm }; });
     out.prefixoAnime = (await prefixo("anime", "The Beginning After the End")).slice(0, 6).map(x => x.id + " " + x.name);
