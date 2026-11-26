@@ -1,12 +1,25 @@
 {
-  "quando": "2026-11-26T11:44:38.264Z",
+  "quando": "2026-11-26T11:47:23.074Z",
   "busca": {
     "The Beginning After the End": "não encontrado",
     "One Punch-Man": "não encontrado"
   },
   "pagina": {
-    "tamanho": 0,
-    "links": []
+    "/search/prefix.json?type=manga&v=1&keyword=The%20Beginning%20After%20the%20End": {
+      "tamanho": 44,
+      "inicio": "{\"categories\":[{\"type\":\"manga\",\"items\":[]}]}",
+      "links": []
+    },
+    "/manga.php?q=The%20Beginning%20After%20the%20End&cat=manga": {
+      "tamanho": 0,
+      "inicio": "",
+      "links": []
+    },
+    "/search/all?cat=manga&q=The%20Beginning%20After%20the%20End": {
+      "tamanho": 80431,
+      "inicio": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html lang=\"en\" class=\"appearance-none\"><head>  \n<link rel=\"preconnect\" href=\"//www.googletagmanager.com/\" crossorigin=\"anonymous\"/>\n<link rel=\"preconnect\" href=\"https://cdn.myanimelist.net\" crossorigin=\"anonymous\"/>\n<title>Search All - MyAnimeList.net\n</title>\n<meta name=\"descr",
+      "links": []
+    }
   },
   "log": []
 }
