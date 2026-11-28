@@ -14,6 +14,7 @@ import {
   terminate, clearIndexedDbPersistence, arrayUnion, arrayRemove, documentId,
 } from "firebase/firestore";
 import { firebaseConfig, adminEmail, downloadUrl } from "./firebase-config.js";
+import { MARCOS, cenaMarco } from "./marcos.js";
 
 const STATUS = {
   lendo:      { label: "Lendo" },
@@ -252,6 +253,7 @@ function startSync(uid) {
   limparLixeira(uid);
   render();
   talvezTutorial(uid);
+  carregarMarcos(uid);
   setTimeout(atualizarAnimes, 20000);
   setTimeout(() => conferirSalas(true), 8000);
   const slowT = setTimeout(() => {
@@ -352,14 +354,18 @@ function trocarPrivado(id, privado) {
 }
 function commit(id, patch) {
   const old = items.get(id); if (!old) return;
+  const antes = nConcluidos();
   items.set(id, { ...old, ...patch, updatedAt: Date.now() });
   render(); scheduleWrite(id);
+  checarMarco(antes, id);
 }
 function create(data) {
   const id = doc(col).id; const now = Date.now();
   if (!data.privado) delete data.privado;
+  const antes = nConcluidos();
   items.set(id, { id, createdAt: now, updatedAt: now, lastReadAt: now, ...data });
   render(); scheduleWrite(id, 0);
+  checarMarco(antes, id);
 }
 function remove(id) {
   // Não apaga de vez: vai para a lixeira por 30 dias
@@ -1163,6 +1169,7 @@ function openMenu() {
       <div class="menu-list">
         <button class="btn" id="mGuia">📖 Guia do app</button>
         ${isAdmin(u) ? `<button class="btn primary" id="mAdmin">👑 Administrador — quem pode usar</button><button class="btn" id="mReports">🛠️ Relatos de problemas</button><button class="btn" id="mDen">🚩 Denúncias</button>` : ""}
+        <button class="btn" id="mMarcos">🏅 Seus marcos</button>
         <button class="btn" id="mLix">🗑️ Lixeira</button>
         <button class="btn" id="mSupport">🛠️ Reportar problema</button>
         <button class="btn" id="mSenha">🔑 Trocar senha</button>
@@ -1180,6 +1187,7 @@ function openMenu() {
     root.querySelector("#mGuia").onclick = openGuia;
     root.querySelector("#mSupport").onclick = openSupport;
     root.querySelector("#mLix").onclick = openLixeira;
+    root.querySelector("#mMarcos").onclick = openMarcos;
     root.querySelector("#mSenha").onclick = openSenha;
     root.querySelector("#mDel").onclick = openExcluirConta;
     root.querySelector("#mExport").onclick = async () => {
@@ -1591,11 +1599,13 @@ function openInfo(mid) {
       <button class="btn ${jaTenho ? "" : "primary"}" id="copyShelf" ${jaTenho ? "disabled" : ""}>${jaTenho ? "✓ Já está na sua estante" : "＋ Adicionar à minha estante (Na fila)"}</button>
       <button class="btn ghost denbtn" id="denIt">🚩 Denunciar</button>`
       : `<div class="visrow"><button type="button" class="mini ic vis ${it.privado ? "priv" : ""}" id="visInfo">${icoVis(it.privado)}</button><span><b>${it.privado ? "Privado" : "Visível"}</b><small>${it.privado ? "Só você vê. Fica fora da estante pública, da vitrine e do ranking." : "Aparece para quem visita sua estante (se o seu perfil for público)."}</small></span></div>
+      ${marcoDoItem(mid) ? `<button class="btn ghost" id="reverMarco">Rever a animação do marco ${marcoDoItem(mid)}</button>` : ""}
       <button class="btn" id="editIt">✎ Editar este mangá</button>`}
     </div>`, (root) => {
     root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
     root.querySelectorAll("[data-seen]").forEach(a => a.addEventListener("click", () => markSeen(a.dataset.seen)));
     const vi = root.querySelector("#visInfo"); if (vi) vi.onclick = () => { trocarPrivado(mid, !it.privado); closeModal(); };
+    const rm2 = root.querySelector("#reverMarco"); if (rm2) rm2.onclick = () => mostrarMarco(marcoDoItem(mid));
     const ci = root.querySelector("#catInfo");
     if (ci) lerCatalogo(it.catId).then(c => completarSinopse(it.catId, c)).then(c => {
       if (!ci.isConnected) return;
@@ -2762,6 +2772,72 @@ function abrirDenunciaForum(m, sala) {
 }
 
 // ---------- Tutorial do primeiro acesso ----------
+
+// ---------- marcos de mangás concluídos (1, 5, 10 … 50) ----------
+// Cada marco aparece uma vez só, quando a pessoa conclui o mangá que leva a estante até ele.
+// Fica salvo na conta (users/{uid}/config/marcos) e no aparelho; dá para rever depois.
+const MARCOS_KEY = (uid) => "estante-marcos-" + uid;
+let marcosVistos = {};
+const plurM = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+const nConcluidos = () => { let n = 0; for (const it of items.values()) if (stOf(it) === "concluido") n++; return n; };
+function marcosSalvarLocal() { if (currentUser) try { localStorage.setItem(MARCOS_KEY(currentUser.uid), JSON.stringify(marcosVistos)); } catch (e) {} }
+async function carregarMarcos(uid) {
+  try { marcosVistos = JSON.parse(localStorage.getItem(MARCOS_KEY(uid)) || "{}") || {}; } catch (e) { marcosVistos = {}; }
+  try {
+    const d = await getDoc(doc(db, "users", uid, "config", "marcos"));
+    const v = d.exists() ? (d.data() || {}).vistos || {} : {};
+    let mudou = false;
+    for (const [n, x] of Object.entries(v)) if (!marcosVistos[n]) { marcosVistos[n] = x; mudou = true; }
+    if (mudou) marcosSalvarLocal();
+  } catch (e) {}
+}
+function marcosGravar() {
+  marcosSalvarLocal();
+  if (currentUser) setDoc(doc(db, "users", currentUser.uid, "config", "marcos"), { vistos: marcosVistos }).catch(() => {});
+}
+function marcoDoItem(id) { const e = Object.entries(marcosVistos).filter(([, x]) => x && x.item === id).map(([n]) => Number(n)); return e.length ? Math.max(...e) : 0; }
+function checarMarco(antes, id) {
+  if (ui.visit) return;
+  const depois = nConcluidos(); if (depois <= antes) return;
+  const novos = MARCOS.filter(m => m.n > antes && m.n <= depois && !marcosVistos[m.n]);
+  if (!novos.length) return;
+  novos.forEach(m => { marcosVistos[m.n] = { em: Date.now(), item: id }; });
+  marcosGravar();
+  setTimeout(() => mostrarMarco(novos[novos.length - 1].n), 450);   // passou de vários de uma vez: mostra o maior
+}
+function mostrarMarco(n) {
+  const m = MARCOS.find(x => x.n === n), c = m && cenaMarco(n); if (!c) return;
+  const velho = document.getElementById("marcoBd"); if (velho) velho.remove();
+  const bd = document.createElement("div"); bd.id = "marcoBd"; bd.className = "marco-bd";
+  bd.innerHTML = `<div class="marco-card" role="dialog" aria-label="${esc(m.titulo)}"><div class="marco-quadro"></div>
+    <h4>${esc(m.titulo)}</h4><p class="marco-p1">${esc(m.p1)}</p><p class="marco-p2">${esc(m.p2)}</p>
+    <button type="button" class="marco-ok">Valeu!</button></div>`;
+  const sr = bd.querySelector(".marco-quadro").attachShadow({ mode: "open" });
+  sr.innerHTML = `<style>${c.css}\n:host{display:block}svg{display:block;width:100%;height:100%}</style><svg viewBox="0 0 220 140" xmlns="http://www.w3.org/2000/svg">${c.svg}</svg>`;
+  document.body.appendChild(bd);
+  const t = setTimeout(() => { const p = bd.querySelector(".marco-p2"); if (p) p.classList.add("on"); }, m.atraso);
+  const fechar = () => { clearTimeout(t); document.removeEventListener("keydown", esc2); bd.classList.add("sai"); setTimeout(() => bd.remove(), 220); };
+  const esc2 = (e) => { if (e.key === "Escape") fechar(); };
+  document.addEventListener("keydown", esc2);
+  bd.querySelector(".marco-ok").onclick = fechar;
+  bd.addEventListener("click", (e) => { if (e.target === bd) fechar(); });
+}
+function openMarcos() {
+  const total = nConcluidos();
+  openModal(`
+    <div class="mhead"><h2>Seus marcos</h2><button type="button" class="icon-btn" data-x>✕</button></div>
+    <div class="mbody">
+      <p class="hint">A cada marco de mangás concluídos, uma animação nova. Você tem ${plurM(total, "mangá concluído", "mangás concluídos")}.</p>
+      <div class="marcos-lista">${MARCOS.map(m => {
+        const ok = total >= m.n;
+        return `<button type="button" class="marco-row ${ok ? "" : "bloq"}" ${ok ? `data-n="${m.n}"` : "disabled"}><span class="marco-num">${m.n}</span><span class="marco-txt"><b>${ok ? esc(m.p1) : "Bloqueado"}</b><small>${ok ? "Toque para rever a animação" : `Faltam ${plurM(m.n - total, "mangá concluído", "mangás concluídos")}`}</small></span></button>`;
+      }).join("")}</div>
+    </div>`, (root) => {
+    root.querySelectorAll("[data-x]").forEach(b => b.onclick = closeModal);
+    root.querySelectorAll("[data-n]").forEach(b => b.onclick = () => mostrarMarco(Number(b.dataset.n)));
+  });
+}
+
 // Só para contas criadas a partir do lançamento desta função, com a estante vazia. Fica salvo na conta.
 const TUT_DESDE = Date.parse("2026-11-25T14:00:00Z");
 const TUT_KEY = (uid) => "estante-tutorial-" + uid;
