@@ -355,6 +355,7 @@ function trocarPrivado(id, privado) {
 function commit(id, patch) {
   const old = items.get(id); if (!old) return;
   const antes = nConcluidos();
+  if (patch.status === "concluido" && stOf(old) !== "concluido") reflexoPendente.add(id);
   items.set(id, { ...old, ...patch, updatedAt: Date.now() });
   render(); scheduleWrite(id);
   checarMarco(antes, id);
@@ -706,7 +707,7 @@ function cardHTML(it) {
     ? `<div class="foot"><span class="when">${parseNota(it.nota) ? "⭐ " + fmtNota(parseNota(it.nota)) : ""}</span>${link}</div>`
     : `<div class="foot"><span class="when ${old ? "old" : ""}">${relTime(it.lastReadAt)}</span><span class="grow"></span>${botaoPrivado(it)}${link}<button class="mini" data-act="edit" title="Editar">✎</button></div>`;
   return `<article class="card" data-id="${esc(it.id)}">
-    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span><button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
+    <div class="cover" data-act="${visit ? "info" : "edit"}">${cover}${avisoLink}<span class="badge s-${st}"><i></i>${STATUS[st].label}</span>${!visit && unreadBadge(it) ? `<span class="capnovo">CAP. NOVO</span>` : ""}<button class="infob" data-act="info" title="Detalhes" aria-label="Detalhes">i</button></div>
     <div class="body">
       <div class="title" title="${esc(it.title)}${it.titulo2 ? " — " + esc(it.titulo2) : ""}"><span class="t1">${esc(it.title)}</span>${it.titulo2 ? `<span class="t2">${esc(it.titulo2)}</span>` : ""}</div>
       ${chap}
@@ -759,10 +760,55 @@ async function atualizarAnimes() {   // avisa no sino: mangá da estante ganhou 
     const texto = v.st === "anu" ? "vai ganhar anime" : antes === "anu" ? "o anime já está disponível" : "";
     if (!texto) continue;
     av.lista.unshift({ key: "anime:" + it.catId + ":" + v.aid + ":" + v.st, mid: it.id, titulo: it.title, texto, em: Date.now() }); mudou = true;
+    reflexoPendente.add(it.id);
   }
   av.iniciado = true; av.lista = av.lista.slice(0, 50);
   salvarJSON(AVISO_ANIME_KEY(), av);
-  if (mudou) updateBell();
+  if (mudou) { updateBell(); render(); }
+}
+// ---------- pequenas animações dos cards ----------
+// salto: capítulo novo (só na primeira vez que aparece) · reflexo: concluído ou anime anunciado/lançado · placar no número do capítulo
+const reflexoPendente = new Set();
+const capMostrado = new Map();
+function animarCards(grid, arr, novos) {
+  const porId = new Map([...grid.children].map(el => [el.dataset.id, el]));
+  let gravar = false;
+  for (const it of arr) {
+    const el = porId.get(it.id); if (!el) continue;
+    // placar: o número do capítulo rola quando muda
+    const cap = fmtCap(it.chapter), velho = capMostrado.get(it.id);
+    if (velho != null && velho !== cap && novos.includes(el)) rolarNumero(el.querySelector(".chap .num b"), velho, cap, (Number(it.chapter) || 0) >= (Number(String(velho).replace(",", ".")) || 0) ? 1 : -1);
+    capMostrado.set(it.id, cap);
+    // salto + etiqueta: capítulo novo que ainda não animou
+    const c = chk[it.id];
+    if (unreadBadge(it) && c && c.anim !== c.latest) {
+      c.anim = c.latest; gravar = true;
+      el.classList.remove("salta"); void el.offsetWidth; el.classList.add("salta");
+      el.addEventListener("animationend", (e) => { if (e.animationName === "salto") el.classList.remove("salta"); });
+    }
+    if (reflexoPendente.has(it.id)) {
+      reflexoPendente.delete(it.id);
+      const cov = el.querySelector(".cover");
+      if (cov) { const f = document.createElement("span"); f.className = "reflexo"; cov.appendChild(f); setTimeout(() => f.remove(), 1400); }
+    }
+  }
+  if (gravar) saveChk();
+}
+function rolarNumero(b, de, para, dir) {
+  if (!b) return;
+  const n = Math.max(de.length, para.length), a = de.padStart(n, " "), z = para.padStart(n, " ");
+  b.classList.add("placar"); b.textContent = "";
+  for (let i = 0; i < n; i++) {
+    const cel = document.createElement("span"); cel.className = "dig";
+    const v = document.createElement("span"); v.textContent = a[i] === " " ? "\u00a0" : a[i]; cel.appendChild(v);
+    if (a[i] !== z[i]) {
+      const nv = document.createElement("span"); nv.textContent = z[i] === " " ? "\u00a0" : z[i];
+      nv.style.transform = `translateY(${dir > 0 ? 100 : -100}%)`; cel.appendChild(nv);
+      requestAnimationFrame(() => requestAnimationFrame(() => { v.style.transform = `translateY(${dir > 0 ? -100 : 100}%)`; nv.style.transform = "translateY(0)"; }));
+    }
+    b.appendChild(cel);
+  }
+  setTimeout(() => { if (b.isConnected) { b.classList.remove("placar"); b.textContent = para; } }, 380);
 }
 function render() {
   if (!currentUser) return;
@@ -776,7 +822,11 @@ function render() {
   if (!vkey) { vt.dataset.uid = ""; vt.innerHTML = ""; }
   updateBell();
   const grid = $("#grid"), empty = $("#empty");
-  if (!loaded || (ui.visit && ui.visit.loading)) { grid.innerHTML = ""; empty.innerHTML = `<div class="loading">Carregando estante…</div>`; return; }
+  if (!loaded || (ui.visit && ui.visit.loading)) {
+    if (!grid.querySelector(".esq")) grid.innerHTML = Array.from({ length: 6 }, () => `<article class="card esq" aria-hidden="true"><div class="cover"><span class="faixa"></span></div><div class="body"><div class="esq-l"></div><div class="esq-l curta"></div><div class="esq-b"></div></div></article>`).join("");
+    empty.innerHTML = ""; return;
+  }
+  if (grid.querySelector(".esq")) grid.innerHTML = "";
   const arr = filtered();
   // o botão tocado (livrinho, +, −) fica com foco; se o card dele for trocado, o navegador joga a página para o topo.
   // tira o foco antes e devolve a rolagem onde estava.
@@ -802,7 +852,8 @@ function render() {
   const mesmaOrdem = els.length === grid.children.length && els.every((e, i) => grid.children[i] === e);
   if (!mesmaOrdem) grid.replaceChildren(...els);
   if (Math.abs(window.scrollY - yAntes) > 1) window.scrollTo(0, yAntes);
-  novos.forEach(n => n.addEventListener("animationend", () => n.classList.remove("entra"), { once: true }));
+  novos.forEach(n => n.addEventListener("animationend", (e) => { if (e.animationName === "pop") n.classList.remove("entra"); }, { once: true }));
+  if (!ui.visit) animarCards(grid, arr, novos);
   novos.flatMap(n => [...n.querySelectorAll("img[data-fallback]")]).forEach(img => img.addEventListener("error", () => {
     if (img.dataset.md === "tentando") return;   // capa do MangaDex: o app ainda vai tentar abrir por outro caminho
     const card = img.closest(".card"); const it = card && source().get(card.dataset.id);
@@ -1118,7 +1169,10 @@ function openEditor(id, opt = {}) {
         const novo = { ...data, privado: querPriv }; if (!capa18) delete novo.capa18;
         create(novo); toast(aviso || (querPriv ? "Adicionado como privado (só você vê)." : "Adicionado à estante!"), aviso ? 6000 : 2000);
       }
-      closeModal();
+      // o botão vira ✓ por um instante e o editor fecha
+      const okb = root.querySelector("#edOk");
+      if (okb) { okb.disabled = true; okb.innerHTML = `<span>${esc(okb.textContent)}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>`; void okb.offsetWidth; okb.classList.add("salvou"); setTimeout(closeModal, 700); }
+      else closeModal();
     });
     if (!it) setTimeout(() => { const q = root.querySelector("#catQ"); if (q) q.focus(); }, 50);
     return () => document.removeEventListener("paste", onPaste);
@@ -1323,10 +1377,13 @@ function juntarNotifs() {
   salvarJSON(NOTIF_KEY(), L);
   return L;
 }
+let bellUltimo = null;
 function updateBell() {
   if (!$("#bellBtn") || !currentUser) return;
   const n = juntarNotifs().itens.filter(x => !x.lida).length + pedidosRecebidos().length + convitesSala.length;
   $("#bellBtn").classList.remove("hidden");
+  if (bellUltimo != null && n > bellUltimo) { const b = $("#bellBtn"); b.classList.remove("toca"); void b.offsetWidth; b.classList.add("toca"); }
+  bellUltimo = n;
   $("#bellCnt").textContent = n > 9 ? "9+" : String(n || "");
   $("#bellCnt").classList.toggle("hidden", !n);
 }
@@ -2803,7 +2860,7 @@ function checarMarco(antes, id) {
   if (!novos.length) return;
   novos.forEach(m => { marcosVistos[m.n] = { em: Date.now(), item: id }; });
   marcosGravar();
-  setTimeout(() => mostrarMarco(novos[novos.length - 1].n), 450);   // passou de vários de uma vez: mostra o maior
+  setTimeout(() => mostrarMarco(novos[novos.length - 1].n), 1300);   // depois do reflexo na capa; passou de vários de uma vez: mostra o maior
 }
 function mostrarMarco(n) {
   const m = MARCOS.find(x => x.n === n), c = m && cenaMarco(n); if (!c) return;
